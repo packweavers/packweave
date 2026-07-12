@@ -1,0 +1,11 @@
+node_modules
+dist
+dist-ssr
+*.local
+.DS_Store
+.claude
+
+src-tauri/target
+src-tauri/gen/schemas
+src-tauri/.cargo/config.toml
+installer/build

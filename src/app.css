@@ -1,0 +1,251 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-brand: #1d1d1f;
+  --color-brand-hover: #393940;
+  --color-brand-highlight: rgba(0, 0, 0, 0.06);
+  --color-on-brand: #ffffff;
+  --color-surface-1: #ffffff;
+  --color-surface-2: #fbfbfd;
+  --color-surface-3: #f5f5f7;
+  --color-surface-4: #ececef;
+  --color-surface-5: #e2e2e6;
+  --color-bg: #f5f5f7;
+  --color-raised-bg: #ffffff;
+  --color-super-raised-bg: #ffffff;
+  --color-inset-bg: #ececef;
+  --color-sidebar-bg: rgba(238, 238, 241, 0.72);
+  --color-chrome-bg: rgba(250, 250, 252, 0.72);
+  --color-button-bg: #e9e9ee;
+  --color-button-bg-hover: #dddde3;
+  --color-text-primary: #1d1d1f;
+  --color-contrast: #1d1d1f;
+  --color-base: #2d2d31;
+  --color-secondary: #86868b;
+  --color-divider: rgba(0, 0, 0, 0.1);
+  --color-divider-dark: rgba(0, 0, 0, 0.16);
+  --color-red: #d70015;
+  --color-orange: #c25e00;
+  --color-green: #1d8a3f;
+  --color-blue: #1d1d1f;
+  --color-purple: #6c6c70;
+  --color-link: #1d1d1f;
+  --color-tooltip-bg: #1d1d1f;
+  --color-tooltip-text: #ffffff;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 16px rgba(0, 0, 0, 0.06);
+  --shadow-raised: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-floating: 0 18px 50px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.08);
+
+  --radius-sm: 0.45rem;
+  --radius-md: 0.6rem;
+  --radius-lg: 0.9rem;
+  --radius-xl: 1.15rem;
+  --radius-max: 999999999px;
+  --titlebar-height: 48px;
+  --traffic-light-inset: 80px;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.theme-light) {
+    --color-brand: #f5f5f7;
+    --color-brand-hover: #e2e2e6;
+    --color-brand-highlight: rgba(255, 255, 255, 0.13);
+    --color-on-brand: #1d1d1f;
+    --color-surface-1: #141416;
+    --color-surface-2: #1a1a1c;
+    --color-surface-3: #232326;
+    --color-surface-4: #2c2c30;
+    --color-surface-5: #3a3a3e;
+    --color-bg: #000000;
+    --color-raised-bg: #1a1a1c;
+    --color-super-raised-bg: #232326;
+    --color-inset-bg: #141416;
+    --color-sidebar-bg: rgba(18, 18, 20, 0.62);
+    --color-chrome-bg: rgba(10, 10, 12, 0.7);
+    --color-button-bg: #2c2c30;
+    --color-button-bg-hover: #3a3a3e;
+    --color-text-primary: #ffffff;
+    --color-contrast: #f5f5f7;
+    --color-base: #d8d8dc;
+    --color-secondary: #909097;
+    --color-divider: rgba(255, 255, 255, 0.11);
+    --color-divider-dark: rgba(255, 255, 255, 0.2);
+    --color-red: #ff6961;
+    --color-orange: #ff9f0a;
+    --color-green: #4cd97b;
+    --color-blue: #f5f5f7;
+    --color-purple: #aeaeb2;
+    --color-link: #f5f5f7;
+    --color-tooltip-bg: #48484e;
+    --color-tooltip-text: #ffffff;
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 18px rgba(0, 0, 0, 0.36);
+    --shadow-raised: 0 1px 3px rgba(0, 0, 0, 0.4);
+    --shadow-floating: 0 20px 56px rgba(0, 0, 0, 0.55), 0 3px 10px rgba(0, 0, 0, 0.4);
+  }
+}
+
+:root.theme-dark {
+  --color-brand: #f5f5f7;
+  --color-brand-hover: #e2e2e6;
+  --color-brand-highlight: rgba(255, 255, 255, 0.13);
+  --color-on-brand: #1d1d1f;
+  --color-surface-1: #141416;
+  --color-surface-2: #1a1a1c;
+  --color-surface-3: #232326;
+  --color-surface-4: #2c2c30;
+  --color-surface-5: #3a3a3e;
+  --color-bg: #000000;
+  --color-raised-bg: #1a1a1c;
+  --color-super-raised-bg: #232326;
+  --color-inset-bg: #141416;
+  --color-sidebar-bg: rgba(18, 18, 20, 0.62);
+  --color-chrome-bg: rgba(10, 10, 12, 0.7);
+  --color-button-bg: #2c2c30;
+  --color-button-bg-hover: #3a3a3e;
+  --color-text-primary: #ffffff;
+  --color-contrast: #f5f5f7;
+  --color-base: #d8d8dc;
+  --color-secondary: #909097;
+  --color-divider: rgba(255, 255, 255, 0.11);
+  --color-divider-dark: rgba(255, 255, 255, 0.2);
+  --color-red: #ff6961;
+  --color-orange: #ff9f0a;
+  --color-green: #4cd97b;
+  --color-blue: #f5f5f7;
+  --color-purple: #aeaeb2;
+  --color-link: #f5f5f7;
+  --color-tooltip-bg: #48484e;
+  --color-tooltip-text: #ffffff;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 18px rgba(0, 0, 0, 0.36);
+  --shadow-raised: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-floating: 0 20px 56px rgba(0, 0, 0, 0.55), 0 3px 10px rgba(0, 0, 0, 0.4);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background-color: var(--color-bg);
+  color: var(--color-base);
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', system-ui, sans-serif;
+  font-size: 13.5px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  user-select: none;
+  letter-spacing: -0.01em;
+}
+
+input,
+textarea,
+select {
+  user-select: text;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  color: var(--color-contrast);
+  margin: 0;
+  letter-spacing: -0.022em;
+}
+
+button {
+  font-family: inherit;
+}
+
+::selection {
+  background: var(--color-brand-highlight);
+}
+
+[data-tauri-drag-region] {
+  cursor: default;
+}
+
+:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-brand) 55%, transparent);
+  outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.inline-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  flex-shrink: 0;
+}
+.inline-confirm button {
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: 0.74rem;
+  font-weight: 600;
+  padding: 0.2rem 0.45rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.inline-confirm .yes {
+  color: var(--color-red);
+}
+.inline-confirm .yes:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-red) 14%, transparent);
+}
+.inline-confirm .no {
+  color: var(--color-secondary);
+}
+.inline-confirm .no:hover {
+  background: var(--color-button-bg);
+  color: var(--color-contrast);
+}
+
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-divider-dark);
+  border-radius: var(--radius-max);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-secondary);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+}
+
+@keyframes toolbar-loadbar-slide {
+  0% {
+    left: -35%;
+  }
+  100% {
+    left: 100%;
+  }
+}

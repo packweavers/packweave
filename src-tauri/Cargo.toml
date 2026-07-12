@@ -1,0 +1,50 @@
+[package]
+name = "packweave"
+version = "0.1.0"
+description = "A git-native desktop builder for Minecraft modpacks across Modrinth and CurseForge"
+authors = ["Tazer"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-updater = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking", "multipart", "stream"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+sha1 = "0.10"
+sha2 = "0.10"
+hex = "0.4"
+anyhow = "1"
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["clock"] }
+futures = "0.3"
+ignore = "0.4"
+similar = "2"
+rayon = "1"
+base64 = "0.22"
+flate2 = "1"
+toml = "0.8"
+tokio = { version = "1", features = ["sync", "time"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+objc2 = "0.6"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["sync-secret-service"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[profile.dev]
+incremental = true
