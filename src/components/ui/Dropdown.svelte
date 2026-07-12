@@ -44,9 +44,25 @@
 		if (triggerEl?.contains(t) || menuEl?.contains(t)) return
 		open = false
 	}
+
+	function onEscape(e: KeyboardEvent) {
+		if (open && e.key === 'Escape') {
+			e.stopPropagation()
+			open = false
+		}
+	}
+
+	function portal(node: HTMLElement) {
+		document.body.appendChild(node)
+		return {
+			destroy() {
+				node.remove()
+			},
+		}
+	}
 </script>
 
-<svelte:document onclick={onDocClick} />
+<svelte:document onclick={onDocClick} onkeydowncapture={onEscape} />
 
 <span
 	bind:this={triggerEl}
@@ -67,7 +83,9 @@
 {#if open}
 	<div
 		bind:this={menuEl}
-		class="fixed z-[70] bg-bg-super-raised border border-divider rounded-md shadow-floating p-1.5 [backdrop-filter:saturate(180%)_blur(20px)]"
+		use:portal
+		data-portal-root
+		class="fixed z-[70] bg-bg-super-raised border border-divider rounded-md shadow-floating p-1.5"
 		style="left:0;top:0"
 	>
 		{@render content(close)}

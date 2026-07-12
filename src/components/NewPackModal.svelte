@@ -15,11 +15,14 @@
 	let minecraft = $state('')
 	let loader = $state<string>('fabric')
 	let loaderVersion = $state('')
+	let snapshots = $state(false)
 	let mcVersions = $state<string[]>([])
 	let loaderVersions = $state<string[]>([])
 	let instance = $state<DetectedInstance | null>(null)
 	let showPicker = $state(false)
 	let pendingLoaderVersion = $state<string | null>(null)
+
+	const looksSnapshot = (v: string) => /\d\dw\d\d|-pre|-rc|snapshot/i.test(v)
 
 	function onPick(picked: DetectedInstance) {
 		instance = picked
@@ -29,38 +32,52 @@
 			loaderVersion = picked.loaderVersion
 			pendingLoaderVersion = picked.loaderVersion
 		}
-		if (picked.minecraft) minecraft = picked.minecraft
+		if (picked.minecraft) {
+			minecraft = picked.minecraft
+			if (looksSnapshot(picked.minecraft)) snapshots = true
+		}
 		if (name === 'My Modpack' && picked.name) name = picked.name
 	}
 
-	api
-		.getMinecraftVersions()
-		.then((list) => {
-			mcVersions = list
-			if (!minecraft) minecraft = list[0] ?? ''
-		})
-		.catch(() => {})
+	let mcReq = 0
+	$effect(() => {
+		const snap = snapshots
+		const req = ++mcReq
+		api
+			.getMinecraftVersions(snap)
+			.then((list) => {
+				if (req !== mcReq) return
+				mcVersions = list
+				if (!minecraft) minecraft = list[0] ?? ''
+			})
+			.catch(() => {})
+	})
 
+	let lvReq = 0
 	$effect(() => {
 		const l = loader
 		const mc = minecraft
+		const snap = snapshots
 		if (l === 'vanilla') {
 			loaderVersions = []
 			loaderVersion = ''
 			return
 		}
+		const req = ++lvReq
 		api
-			.getLoaderVersions(l, mc)
+			.getLoaderVersions(l, mc, snap)
 			.then((list) => {
+				if (req !== lvReq) return
 				loaderVersions = list
 				if (pendingLoaderVersion) {
 					loaderVersion = pendingLoaderVersion
 					pendingLoaderVersion = null
-				} else {
+				} else if (!list.includes(loaderVersion)) {
 					loaderVersion = list[0] ?? ''
 				}
 			})
 			.catch(() => {
+				if (req !== lvReq) return
 				loaderVersions = []
 				loaderVersion = ''
 			})
@@ -93,7 +110,15 @@
 	<div class="grid grid-cols-2 gap-3">
 		<div class="flex flex-col gap-[0.35rem] mb-[0.85rem]">
 			<span class="text-[0.78rem] text-secondary font-[550]">Minecraft version</span>
-			<Select bind:value={minecraft} options={mcVersions} allowCustom placeholder="1.20.1" />
+			<Select bind:value={minecraft} options={mcVersions} placeholder="1.20.1" />
+			<label class="flex items-center gap-[0.35rem] text-[0.72rem] text-secondary cursor-pointer">
+				<input
+					type="checkbox"
+					class="w-[0.85rem] h-[0.85rem] accent-brand cursor-pointer"
+					bind:checked={snapshots}
+				/>
+				Include snapshots
+			</label>
 		</div>
 		<div class="flex flex-col gap-[0.35rem] mb-[0.85rem]">
 			<span class="text-[0.78rem] text-secondary font-[550]">Loader</span>
@@ -104,7 +129,7 @@
 	{#if loader !== 'vanilla'}
 		<div class="flex flex-col gap-[0.35rem] mb-[0.85rem]">
 			<span class="text-[0.78rem] text-secondary font-[550]">Loader version</span>
-			<Select bind:value={loaderVersion} options={loaderVersions} allowCustom placeholder="latest" />
+			<Select bind:value={loaderVersion} options={loaderVersions} placeholder="latest" />
 		</div>
 	{/if}
 

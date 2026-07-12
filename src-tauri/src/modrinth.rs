@@ -194,6 +194,12 @@ struct LoaderGameVersion {
 #[derive(Debug, Deserialize)]
 struct LoaderEntry {
     id: String,
+    #[serde(default = "stable_default")]
+    stable: bool,
+}
+
+fn stable_default() -> bool {
+    true
 }
 
 impl Modrinth {
@@ -506,28 +512,39 @@ impl Modrinth {
             .collect())
     }
 
-    pub async fn game_versions(&self) -> Result<Vec<String>> {
-        if let Some(v) =
-            self.cache.get::<Vec<String>>("gamever", "all", TTL_TAGS)
+    pub async fn game_versions(
+        &self,
+        include_snapshots: bool,
+    ) -> Result<Vec<String>> {
+        let tags: Vec<(String, String)> = match self
+            .cache
+            .get::<Vec<(String, String)>>("gamever", "all", TTL_TAGS)
         {
-            return Ok(v);
-        }
-        let url = format!("{API}/v2/tag/game_version");
-        let resp = self.execute(self.client.get(&url)).await?;
-        let list: Vec<GameVersionTag> = resp.json().await?;
-        let result: Vec<String> = list
+            Some(v) => v,
+            None => {
+                let url = format!("{API}/v2/tag/game_version");
+                let resp = self.execute(self.client.get(&url)).await?;
+                let list: Vec<GameVersionTag> = resp.json().await?;
+                let tags: Vec<(String, String)> = list
+                    .into_iter()
+                    .map(|g| (g.version, g.version_type))
+                    .collect();
+                self.cache.put("gamever", "all", &tags);
+                tags
+            }
+        };
+        Ok(tags
             .into_iter()
-            .filter(|g| g.version_type == "release")
-            .map(|g| g.version)
-            .collect();
-        self.cache.put("gamever", "all", &result);
-        Ok(result)
+            .filter(|(_, ty)| include_snapshots || ty == "release")
+            .map(|(v, _)| v)
+            .collect())
     }
 
     pub async fn loader_versions(
         &self,
         loader: &str,
         minecraft: &str,
+        include_unstable: bool,
     ) -> Result<Vec<String>> {
         let path = match loader {
             "fabric" => "fabric",
@@ -537,38 +554,50 @@ impl Modrinth {
             _ => return Ok(vec![]),
         };
         let cache_key = format!("{loader}|{minecraft}");
-        if let Some(v) = self
+        let versions: Vec<(String, bool)> = match self
             .cache
-            .get::<Vec<String>>("loaders", &cache_key, TTL_TAGS)
+            .get::<Vec<(String, bool)>>("loaders", &cache_key, TTL_TAGS)
         {
-            return Ok(v);
-        }
-        let url = format!(
-            "https://launcher-meta.modrinth.com/{path}/v0/manifest.json"
-        );
-        let resp = self.execute(self.client.get(&url)).await?;
-        let manifest: LoaderManifest = resp.json().await?;
-        let entry = manifest
-            .game_versions
-            .iter()
-            .find(|g| g.id == minecraft && !g.loaders.is_empty())
-            .or_else(|| {
-                manifest
+            Some(v) => v,
+            None => {
+                let url = format!(
+                    "https://launcher-meta.modrinth.com/{path}/v0/manifest.json"
+                );
+                let resp = self.execute(self.client.get(&url)).await?;
+                let manifest: LoaderManifest = resp.json().await?;
+                let entry = manifest
                     .game_versions
                     .iter()
-                    .find(|g| g.id == "${modrinth.gameVersion}")
-            })
-            .or_else(|| {
-                manifest
-                    .game_versions
-                    .iter()
-                    .find(|g| !g.loaders.is_empty())
-            });
-        let result: Vec<String> = entry
-            .map(|e| e.loaders.iter().map(|l| l.id.clone()).collect())
-            .unwrap_or_default();
-        self.cache.put("loaders", &cache_key, &result);
-        Ok(result)
+                    .find(|g| g.id == minecraft && !g.loaders.is_empty())
+                    .or_else(|| {
+                        manifest
+                            .game_versions
+                            .iter()
+                            .find(|g| g.id == "${modrinth.gameVersion}")
+                    })
+                    .or_else(|| {
+                        manifest
+                            .game_versions
+                            .iter()
+                            .find(|g| !g.loaders.is_empty())
+                    });
+                let versions: Vec<(String, bool)> = entry
+                    .map(|e| {
+                        e.loaders
+                            .iter()
+                            .map(|l| (l.id.clone(), l.stable))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                self.cache.put("loaders", &cache_key, &versions);
+                versions
+            }
+        };
+        Ok(versions
+            .into_iter()
+            .filter(|(_, stable)| include_unstable || *stable)
+            .map(|(id, _)| id)
+            .collect())
     }
 
     pub async fn versions_from_hashes(

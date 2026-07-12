@@ -311,13 +311,18 @@ pub async fn get_loader_versions(
     state: State<'_, Modrinth>,
     loader: String,
     minecraft: String,
+    include_snapshots: bool,
 ) -> Result<Vec<String>, String> {
-    state.loader_versions(&loader, &minecraft).await.map_err(es)
+    state
+        .loader_versions(&loader, &minecraft, include_snapshots)
+        .await
+        .map_err(es)
 }
 
 #[tauri::command]
 pub async fn get_minecraft_versions(
     state: State<'_, Modrinth>,
+    include_snapshots: bool,
 ) -> Result<Vec<String>, String> {
-    state.game_versions().await.map_err(es)
+    state.game_versions(include_snapshots).await.map_err(es)
 }

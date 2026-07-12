@@ -246,12 +246,16 @@ export const api = {
 		return invoke('download_mods', { path, output })
 	},
 
-	getLoaderVersions(loader: string, minecraft: string): Promise<string[]> {
-		return invoke('get_loader_versions', { loader, minecraft })
+	getLoaderVersions(
+		loader: string,
+		minecraft: string,
+		includeSnapshots = false,
+	): Promise<string[]> {
+		return invoke('get_loader_versions', { loader, minecraft, includeSnapshots })
 	},
 
-	getMinecraftVersions(): Promise<string[]> {
-		return invoke('get_minecraft_versions')
+	getMinecraftVersions(includeSnapshots = false): Promise<string[]> {
+		return invoke('get_minecraft_versions', { includeSnapshots })
 	},
 
 	syncFileDiff(path: string, rel: string, kind: string): Promise<string> {

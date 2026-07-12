@@ -25,11 +25,14 @@
 		await loadIcon()
 	}
 
+	const looksSnapshot = (v: string) => /\d\dw\d\d|-pre|-rc|snapshot/i.test(v)
+
 	let version = $state(store.pack?.manifest.version ?? '1.0.0')
 	let minecraft = $state(store.pack?.manifest.minecraft ?? '')
 	let loader = $state(store.pack?.manifest.loader ?? 'fabric')
 	let loaderVersion = $state(store.pack?.manifest.loaderVersion ?? '')
 	let channel = $state(store.pack?.manifest.channel ?? 'release')
+	let snapshots = $state(looksSnapshot(store.pack?.manifest.minecraft ?? ''))
 	let mcVersions = $state<string[]>([])
 	let loaderVersions = $state<string[]>([])
 
@@ -41,10 +44,17 @@
 			alpha: 'Allow betas & alphas',
 		})[c] ?? c
 
-	api
-		.getMinecraftVersions()
-		.then((l) => (mcVersions = l))
-		.catch(() => {})
+	let mcReq = 0
+	$effect(() => {
+		const snap = snapshots
+		const req = ++mcReq
+		api
+			.getMinecraftVersions(snap)
+			.then((l) => {
+				if (req === mcReq) mcVersions = l
+			})
+			.catch(() => {})
+	})
 
 	let lastDir: string | null | undefined = store.pack?.dir
 	$effect(() => {
@@ -60,13 +70,20 @@
 		}
 	})
 
+	let lvReq = 0
 	$effect(() => {
 		const l = loader
 		const mc = minecraft
+		const snap = snapshots
+		const req = ++lvReq
 		api
-			.getLoaderVersions(l, mc)
-			.then((vs) => (loaderVersions = vs))
-			.catch(() => (loaderVersions = []))
+			.getLoaderVersions(l, mc, snap)
+			.then((vs) => {
+				if (req === lvReq) loaderVersions = vs
+			})
+			.catch(() => {
+				if (req === lvReq) loaderVersions = []
+			})
 	})
 
 	async function apply() {
@@ -120,7 +137,15 @@
 	</label>
 	<div class="flex flex-col gap-[0.3rem] mb-[0.6rem]">
 		<span class="text-[0.72rem] text-secondary font-[550]">Minecraft version</span>
-		<Select bind:value={minecraft} options={mcVersions} allowCustom placeholder="1.20.1" />
+		<Select bind:value={minecraft} options={mcVersions} placeholder="1.20.1" />
+		<label class="flex items-center gap-[0.35rem] text-[0.7rem] text-secondary cursor-pointer">
+			<input
+				type="checkbox"
+				class="w-[0.85rem] h-[0.85rem] accent-brand cursor-pointer"
+				bind:checked={snapshots}
+			/>
+			Include snapshots
+		</label>
 	</div>
 	<div class="flex flex-col gap-[0.3rem] mb-[0.6rem]">
 		<span class="text-[0.72rem] text-secondary font-[550]">Loader</span>
@@ -129,7 +154,7 @@
 	{#if loader !== 'vanilla'}
 		<div class="flex flex-col gap-[0.3rem] mb-[0.6rem]">
 			<span class="text-[0.72rem] text-secondary font-[550]">Loader version</span>
-			<Select bind:value={loaderVersion} options={loaderVersions} allowCustom placeholder="latest" />
+			<Select bind:value={loaderVersion} options={loaderVersions} placeholder="latest" />
 		</div>
 	{/if}
 

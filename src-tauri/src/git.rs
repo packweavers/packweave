@@ -83,8 +83,20 @@ pub struct Tag {
     pub subject: String,
 }
 
+fn new_git() -> Command {
+    #[allow(unused_mut)]
+    let mut cmd = Command::new("git");
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
+
 fn git(dir: &Path, args: &[&str]) -> Result<String> {
-    let output = Command::new("git")
+    let output = new_git()
         .current_dir(dir)
         .args(args)
         .output()
@@ -98,7 +110,7 @@ fn git(dir: &Path, args: &[&str]) -> Result<String> {
 }
 
 fn git_ok(dir: &Path, args: &[&str]) -> bool {
-    Command::new("git")
+    new_git()
         .current_dir(dir)
         .args(args)
         .output()
@@ -107,7 +119,7 @@ fn git_ok(dir: &Path, args: &[&str]) -> bool {
 }
 
 fn net_command(dir: Option<&Path>) -> Command {
-    let mut cmd = Command::new("git");
+    let mut cmd = new_git();
     if let Some(d) = dir {
         cmd.current_dir(d);
     }

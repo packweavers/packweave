@@ -16,6 +16,15 @@ pub async fn bind_instance(
     instance: String,
 ) -> Result<(), String> {
     let dir = PathBuf::from(&path);
+    let inst = PathBuf::from(&instance);
+    let pack_real = std::fs::canonicalize(&dir).unwrap_or_else(|_| dir.clone());
+    let inst_real = std::fs::canonicalize(&inst).unwrap_or(inst);
+    if pack_real == inst_real
+        || pack_real.starts_with(&inst_real)
+        || inst_real.starts_with(&pack_real)
+    {
+        return Err("The pack folder and the instance folder can't be the same or inside each other.".into());
+    }
     let mut local = packlocal::read(&dir);
     local.instance_dir = Some(instance);
     packlocal::write(&dir, &local).map_err(es)

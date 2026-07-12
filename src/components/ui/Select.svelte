@@ -6,14 +6,12 @@
 		value = $bindable(''),
 		options = [],
 		placeholder = 'Select…',
-		allowCustom = false,
 		searchable = true,
 		display = (o: string) => o,
 	}: {
 		value?: string
 		options?: readonly string[]
 		placeholder?: string
-		allowCustom?: boolean
 		searchable?: boolean
 		display?: (o: string) => string
 	} = $props()
@@ -71,22 +69,25 @@
 		value = o
 		open = false
 	}
-	function commit() {
-		if (filtered.length) pick(filtered[Math.min(active, filtered.length - 1)])
-		else if (allowCustom && query.trim()) pick(query.trim())
+	function move(delta: number) {
+		active = Math.min(Math.max(active + delta, 0), filtered.length - 1)
+		requestAnimationFrame(() => {
+			menuEl?.querySelector('[data-active="true"]')?.scrollIntoView({ block: 'nearest' })
+		})
 	}
 	function onKeydown(e: KeyboardEvent) {
 		if (e.key === 'ArrowDown') {
 			e.preventDefault()
-			active = Math.min(active + 1, filtered.length - 1)
+			move(1)
 		} else if (e.key === 'ArrowUp') {
 			e.preventDefault()
-			active = Math.max(active - 1, 0)
+			move(-1)
 		} else if (e.key === 'Enter') {
 			e.preventDefault()
-			commit()
+			if (filtered.length) pick(filtered[Math.min(active, filtered.length - 1)])
 		} else if (e.key === 'Escape') {
 			e.preventDefault()
+			e.stopPropagation()
 			close()
 		}
 	}
@@ -98,14 +99,10 @@
 	}
 
 	function portal(node: HTMLElement) {
-		document.body.appendChild(node)
-		const stop = (e: Event) => e.stopPropagation()
-		node.addEventListener('mousedown', stop)
-		node.addEventListener('click', stop)
+		const host = triggerEl?.closest('[data-portal-root]') ?? document.body
+		host.appendChild(node)
 		return {
 			destroy() {
-				node.removeEventListener('mousedown', stop)
-				node.removeEventListener('click', stop)
 				node.remove()
 			},
 		}
@@ -130,7 +127,7 @@
 	<div
 		bind:this={menuEl}
 		use:portal
-		class="fixed z-[100] bg-bg-super-raised border border-divider rounded-md shadow-floating p-1 [backdrop-filter:saturate(180%)_blur(20px)]"
+		class="fixed z-[100] bg-bg-super-raised border border-divider rounded-md shadow-floating p-1"
 		style="left:0;top:0"
 	>
 		{#if searchable}
@@ -141,26 +138,16 @@
 					bind:value={query}
 					onkeydown={onKeydown}
 					oninput={() => (active = 0)}
-					placeholder={allowCustom ? 'Search or type…' : 'Search…'}
+					placeholder="Search…"
 					spellcheck="false"
 					class="w-full bg-transparent border-0 outline-none text-[0.84rem] text-contrast py-1"
 				/>
 			</div>
 		{/if}
 		<div class="max-h-[14rem] overflow-y-auto">
-			{#if allowCustom && query.trim() && !filtered.includes(query.trim())}
-				<button
-					class="flex items-center gap-2 w-full text-left text-[0.84rem] px-2 py-[0.35rem] rounded-sm cursor-pointer text-body border-none bg-transparent hover:bg-button-bg"
-					onclick={(e) => {
-						e.stopPropagation()
-						pick(query.trim())
-					}}
-				>
-					Use “{query.trim()}”
-				</button>
-			{/if}
 			{#each filtered as o, i (o)}
 				<button
+					data-active={i === active}
 					class={`flex items-center justify-between gap-2 w-full text-left text-[0.84rem] px-2 py-[0.35rem] rounded-sm cursor-pointer border-none ${
 						i === active ? 'bg-button-bg text-contrast' : 'bg-transparent text-body hover:bg-button-bg'
 					}`}
@@ -174,7 +161,7 @@
 					{#if o === value}<Check size={14} class="text-brand shrink-0" />{/if}
 				</button>
 			{/each}
-			{#if !filtered.length && !(allowCustom && query.trim())}
+			{#if !filtered.length}
 				<div class="text-secondary text-[0.8rem] px-2 py-2 text-center">No matches</div>
 			{/if}
 		</div>

@@ -44,6 +44,13 @@ export async function openRecent(dir: string): Promise<boolean> {
 	}
 }
 
+function foldersOverlap(a: string, b: string): boolean {
+	const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+	const x = norm(a)
+	const y = norm(b)
+	return x === y || x.startsWith(`${y}/`) || y.startsWith(`${x}/`)
+}
+
 export async function createPack(
 	name: string,
 	minecraft: string,
@@ -59,6 +66,10 @@ export async function createPack(
 			.replace(/[^a-z0-9-_ ]/gi, '')
 			.replace(/\s+/g, '-') || 'modpack'
 	const dir = `${parent}/${safe}`
+	if (instanceDir && foldersOverlap(dir, instanceDir)) {
+		notify('error', "The pack can't live inside the instance it syncs with. Pick another folder.")
+		return false
+	}
 	s.busy = true
 	try {
 		const manifest = await api.createPack(dir, name.trim(), minecraft, loader, loaderVersion)

@@ -1,11 +1,16 @@
-# Trademarks & brand assets
+# Copying Guidelines
 
 The **source code** of packweave is licensed under the GNU General Public License,
-version 3 — see [`LICENSE`](LICENSE). That license covers the code, and the code
+version 3 - see [`LICENSE`](LICENSE). That license covers the code, and the code
 only.
 
-The following are **not** covered by the GPL and are **reserved**
-— © 2026 Packweave, all rights reserved:
+## Packweave Branding
+
+Packweave branding elements are **not** covered by the GPL and are **reserved**
+
+> All rights reserved. © 2026 Packweave.
+
+This includes, but may not be limited to, the following files:
 
 - The name **"packweave"**.
 - The packweave logo.
