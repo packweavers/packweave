@@ -10,7 +10,7 @@ Packweave branding elements are **not** covered by the GPL and are **reserved**
 
 > All rights reserved. © 2026 Packweave.
 
-This includes, but may not be limited to, the following files:
+This includes, but may not be limited to, the following elements:
 
 - The name **"packweave"**.
 - The packweave logo.

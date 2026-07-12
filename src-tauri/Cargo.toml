@@ -1,6 +1,6 @@
 [package]
 name = "packweave"
-version = "0.1.0"
+version = "0.1.1"
 description = "A git-native desktop builder for Minecraft modpacks across Modrinth and CurseForge"
 authors = ["Tazer"]
 edition = "2021"
