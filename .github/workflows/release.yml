@@ -55,3 +55,22 @@ jobs:
           releaseName: packweave ${{ github.ref_name }}
           releaseDraft: true
           args: ${{ matrix.args }}
+      - name: Publish stable name installers
+        if: success()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${{ github.ref_name }}"
+          mkdir -p dist-stable
+          find src-tauri/target -type f -path '*/bundle/*' | while read -r f; do
+            case "$f" in
+              *_aarch64.dmg) name=packweave-macos-arm64.dmg ;;
+              *_x64.dmg | *_x86_64.dmg) name=packweave-macos-x64.dmg ;;
+              *-setup.exe) name=packweave-windows-x64.exe ;;
+              *_amd64.AppImage | *_x86_64.AppImage) name=packweave-linux-x86_64.AppImage ;;
+              *) continue ;;
+            esac
+            cp "$f" "dist-stable/$name"
+            gh release upload "$tag" "dist-stable/$name" --clobber --repo "$GITHUB_REPOSITORY"
+          done

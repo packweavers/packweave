@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use tauri::State;
 
 use crate::cfpack;
+use crate::curseforge::CurseForge;
 use crate::dist;
 use crate::download::{self, DownloadReport};
 use crate::instance;
@@ -36,12 +37,14 @@ pub async fn export_mrpack(
         &env,
         &overrides,
     )
+    .await
     .map_err(es)
 }
 
 #[tauri::command]
 pub async fn export_curseforge(
     state: State<'_, Modrinth>,
+    cf: State<'_, CurseForge>,
     path: String,
     output: String,
     env: String,
@@ -54,6 +57,7 @@ pub async fn export_curseforge(
         resolve_loader_version(state.inner(), &manifest).await;
     let overrides = instance::overrides_dir(&dir);
     cfpack::export(
+        cf.inner(),
         &lock,
         &manifest.name,
         &manifest.version,
@@ -152,6 +156,7 @@ pub async fn export_dist(
 
 #[tauri::command]
 pub async fn publish_pack(
+    cf: State<'_, CurseForge>,
     target: String,
     path: String,
     project_id: String,
@@ -168,6 +173,7 @@ pub async fn publish_pack(
         "curseforge" => {
             let token = secrets::get("curseforge_token").unwrap_or_default();
             publish::publish_curseforge(
+                cf.inner(),
                 &lock,
                 &manifest,
                 &overrides,

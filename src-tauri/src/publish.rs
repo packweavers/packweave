@@ -3,6 +3,7 @@ use serde_json::json;
 use std::path::Path;
 
 use crate::cfpack;
+use crate::curseforge::CurseForge;
 use crate::lockfile::Lockfile;
 use crate::manifest::Manifest;
 use crate::mrpack;
@@ -28,7 +29,8 @@ pub async fn publish_modrinth(
     }
     let tmp = std::env::temp_dir()
         .join(format!("packweave-{}.mrpack", sanitize(version_number)));
-    mrpack::export(lock, &manifest.name, version_number, &tmp, env, overrides)?;
+    mrpack::export(lock, &manifest.name, version_number, &tmp, env, overrides)
+        .await?;
     let bytes = std::fs::read(&tmp)?;
     let _ = std::fs::remove_file(&tmp);
 
@@ -83,6 +85,7 @@ pub async fn publish_modrinth(
 
 #[allow(clippy::too_many_arguments)]
 pub async fn publish_curseforge(
+    cf: &CurseForge,
     lock: &Lockfile,
     manifest: &Manifest,
     overrides: &Path,
@@ -100,8 +103,16 @@ pub async fn publish_curseforge(
     }
     let tmp = std::env::temp_dir()
         .join(format!("packweave-{}-cf.zip", sanitize(version_number)));
-    cfpack::export(lock, &manifest.name, version_number, &tmp, env, overrides)
-        .await?;
+    cfpack::export(
+        cf,
+        lock,
+        &manifest.name,
+        version_number,
+        &tmp,
+        env,
+        overrides,
+    )
+    .await?;
     let bytes = std::fs::read(&tmp)?;
     let _ = std::fs::remove_file(&tmp);
 

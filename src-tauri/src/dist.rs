@@ -163,6 +163,9 @@ fn zip_overrides(
                 .strip_prefix(base)
                 .map(|r| r.to_string_lossy().replace('\\', "/"))
                 .unwrap_or_default();
+            if instance::is_os_junk(&rel) {
+                continue;
+            }
             let bytes = std::fs::read(&p)?;
             zip.start_file(format!(".minecraft/{rel}"), options)?;
             zip.write_all(&bytes)?;
