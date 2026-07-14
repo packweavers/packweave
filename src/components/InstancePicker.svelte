@@ -41,20 +41,25 @@
 	}
 
 	async function browse() {
-		const dir = await pickFolder('Choose a Minecraft instance folder')
+		const dir = await pickFolder('Choose an instance folder')
 		if (!dir) return
-		onpick?.({
-			launcher: 'Folder',
-			name: basename(dir),
-			gameDir: dir,
-			minecraft: null,
-			loader: null,
-			loaderVersion: null,
-			kind: 'local',
-			source: null,
-			packName: null,
-			packVersion: null,
-		})
+		try {
+			onpick?.(await api.resolveInstanceFolder(dir))
+		} catch {
+			onpick?.({
+				launcher: 'Folder',
+				name: basename(dir),
+				gameDir: dir,
+				minecraft: null,
+				loader: null,
+				loaderVersion: null,
+				kind: 'local',
+				source: null,
+				packName: null,
+				packVersion: null,
+				iconPath: null,
+			})
+		}
 	}
 </script>
 

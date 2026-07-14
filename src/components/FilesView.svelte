@@ -19,6 +19,7 @@
 		SlidersHorizontal,
 	} from '@lucide/svelte'
 	import ButtonStyled from './ui/ButtonStyled.svelte'
+	import FeatureTip from './ui/FeatureTip.svelte'
 	import CodeEditor from './ui/CodeEditor.svelte'
 	import MarkdownEditor from './ui/MarkdownEditor.svelte'
 	import ImageViewer from './ui/ImageViewer.svelte'
@@ -386,6 +387,11 @@
 			</button>
 		{/each}
 	</div>
+
+	<FeatureTip id="files" class="mx-4 mt-[0.6rem]">
+		Edit configs, options, and any other files your pack ships. When an instance is linked, switch
+		to its files or let saved edits sync across automatically.
+	</FeatureTip>
 
 	<div class="flex-1 grid grid-cols-[300px_1fr] min-h-0">
 		<div class="flex flex-col border-r border-divider min-h-0">

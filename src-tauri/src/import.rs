@@ -1,24 +1,24 @@
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 use serde_json::Value;
-use std::collections::HashMap;
+use sha1::{Digest, Sha1};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Read;
 use std::path::Path;
 
 use crate::content::{self, ContentItem};
-use crate::curseforge::CurseForge;
+use crate::curseforge::{self, CurseForge};
 use crate::instance;
 use crate::lockfile::SourceFile;
 use crate::manifest::{self, Manifest};
 use crate::modrinth::Modrinth;
 use crate::providers::ProviderId;
 use crate::ptype::ProjectType;
-use std::collections::BTreeMap;
 
 type Archive = zip::ZipArchive<std::fs::File>;
 
 pub async fn import_pack(
     mr: &Modrinth,
-    _cf: &CurseForge,
+    cf: &CurseForge,
     src: &Path,
     dest: &Path,
 ) -> Result<Manifest> {
@@ -31,8 +31,13 @@ pub async fn import_pack(
         import_mrpack(mr, &mut archive, dest).await
     } else if names.iter().any(|n| n == "manifest.json") {
         import_curseforge(&mut archive, dest)
+    } else if names
+        .iter()
+        .any(|n| n == "instance.cfg" || n.ends_with("/instance.cfg"))
+    {
+        import_prism(mr, cf, &mut archive, dest).await
     } else {
-        bail!("Unrecognized pack. Expected a Modrinth (.mrpack) or CurseForge (.zip) modpack.")
+        bail!("Unrecognized pack. Expected a Modrinth (.mrpack), CurseForge (.zip), or Prism / MultiMC instance (.zip).")
     }
 }
 
@@ -272,6 +277,232 @@ fn read_json(archive: &mut Archive, name: &str) -> Result<Value> {
     let mut s = String::new();
     f.read_to_string(&mut s)?;
     Ok(serde_json::from_str(&s)?)
+}
+
+fn read_text(archive: &mut Archive, name: &str) -> Result<String> {
+    let mut f = archive.by_name(name)?;
+    let mut s = String::new();
+    f.read_to_string(&mut s)?;
+    Ok(s)
+}
+
+fn read_bytes(archive: &mut Archive, name: &str) -> Result<Vec<u8>> {
+    let mut f = archive.by_name(name)?;
+    let mut b = Vec::new();
+    f.read_to_end(&mut b)?;
+    Ok(b)
+}
+
+async fn import_prism(
+    mr: &Modrinth,
+    cf: &CurseForge,
+    archive: &mut Archive,
+    dest: &Path,
+) -> Result<Manifest> {
+    let names: Vec<String> = (0..archive.len())
+        .filter_map(|i| archive.by_index(i).ok().map(|f| f.name().to_string()))
+        .collect();
+    let cfg_name = names
+        .iter()
+        .find(|n| n.as_str() == "instance.cfg" || n.ends_with("/instance.cfg"))
+        .cloned()
+        .ok_or_else(|| anyhow!("Not a Prism / MultiMC instance."))?;
+    let root = cfg_name
+        .strip_suffix("instance.cfg")
+        .unwrap_or("")
+        .to_string();
+
+    let mut name = "Imported Pack".to_string();
+    if let Ok(cfg) = read_text(archive, &cfg_name) {
+        for line in cfg.lines() {
+            if let Some(v) = line.strip_prefix("name=") {
+                if !v.trim().is_empty() {
+                    name = v.trim().to_string();
+                }
+            }
+        }
+    }
+
+    let mut minecraft = String::new();
+    let mut loader = "vanilla".to_string();
+    let mut loader_version: Option<String> = None;
+    if let Ok(text) = read_text(archive, &format!("{root}mmc-pack.json")) {
+        if let Ok(json) = serde_json::from_str::<Value>(&text) {
+            let comps =
+                json.get("components").and_then(|c| c.as_array()).cloned();
+            for comp in comps.unwrap_or_default() {
+                let uid =
+                    comp.get("uid").and_then(|u| u.as_str()).unwrap_or("");
+                let ver = comp
+                    .get("version")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                match uid {
+                    "net.minecraft" => minecraft = ver.unwrap_or_default(),
+                    "net.fabricmc.fabric-loader" => {
+                        loader = "fabric".into();
+                        loader_version = ver;
+                    }
+                    "org.quiltmc.quilt-loader" => {
+                        loader = "quilt".into();
+                        loader_version = ver;
+                    }
+                    "net.minecraftforge" => {
+                        loader = "forge".into();
+                        loader_version = ver;
+                    }
+                    "net.neoforged" => {
+                        loader = "neoforge".into();
+                        loader_version = ver;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    let mf = Manifest {
+        name,
+        version: "1.0.0".into(),
+        minecraft,
+        loader,
+        loader_version,
+        channel: crate::manifest::Channel::Release,
+    };
+    std::fs::create_dir_all(dest)?;
+    manifest::write(dest, &mf)?;
+
+    let game = [".minecraft/", "minecraft/"]
+        .iter()
+        .map(|g| format!("{root}{g}"))
+        .find(|g| names.iter().any(|n| n.starts_with(g.as_str())))
+        .unwrap_or_else(|| format!("{root}.minecraft/"));
+
+    let mod_names: Vec<String> = names
+        .iter()
+        .filter(|n| match n.strip_prefix(game.as_str()) {
+            Some(r) => {
+                r.starts_with("mods/")
+                    && (r.ends_with(".jar") || r.ends_with(".zip"))
+            }
+            None => false,
+        })
+        .cloned()
+        .collect();
+
+    let mut jars: Vec<(String, String, u32)> = Vec::new();
+    for n in &mod_names {
+        if let Ok(bytes) = read_bytes(archive, n) {
+            let mut h = Sha1::new();
+            h.update(&bytes);
+            let sha1 = hex::encode(h.finalize());
+            let murmur = curseforge::cf_fingerprint(&bytes);
+            jars.push((n.clone(), sha1, murmur));
+        }
+    }
+
+    let sha1s: Vec<String> = jars.iter().map(|j| j.1.clone()).collect();
+    let mr_found = mr.versions_by_hashes(&sha1s).await.unwrap_or_default();
+    let prints: Vec<u32> = jars
+        .iter()
+        .filter(|j| !mr_found.contains_key(&j.1))
+        .map(|j| j.2)
+        .collect();
+    let cf_found = cf.fingerprints(&prints).await.unwrap_or_default();
+
+    let proj_ids: Vec<String> =
+        mr_found.values().map(|v| v.project_id.clone()).collect();
+    let projects = mr.projects_bulk(&proj_ids).await.unwrap_or_default();
+    let name_by_pid: HashMap<String, (String, String)> = projects
+        .into_iter()
+        .map(|p| (p.id.clone(), (p.title, p.slug)))
+        .collect();
+
+    let mut matched: HashSet<String> = HashSet::new();
+    for (entry, sha1, murmur) in &jars {
+        if let Some(v) = mr_found.get(sha1) {
+            let (nm, slug) = name_by_pid
+                .get(&v.project_id)
+                .cloned()
+                .unwrap_or_else(|| (file_stem(entry), v.project_id.clone()));
+            let mut sources = BTreeMap::new();
+            sources.insert(
+                ProviderId::Modrinth,
+                SourceFile {
+                    id: Some(v.project_id.clone()),
+                    pin: Some(v.id.clone()),
+                    slug,
+                    version_id: v.id.clone(),
+                    version_number: v.version_number.clone(),
+                    ..Default::default()
+                },
+            );
+            content::add_item(
+                dest,
+                &mod_item(nm, ProviderId::Modrinth, sources),
+            )?;
+            matched.insert(entry.clone());
+        } else if let Some((mod_id, file)) = cf_found.get(&(*murmur as u64)) {
+            let mut sources = BTreeMap::new();
+            sources.insert(
+                ProviderId::Curseforge,
+                SourceFile {
+                    id: Some(mod_id.to_string()),
+                    pin: Some(file.id.to_string()),
+                    slug: mod_id.to_string(),
+                    ..Default::default()
+                },
+            );
+            content::add_item(
+                dest,
+                &mod_item(file_stem(entry), ProviderId::Curseforge, sources),
+            )?;
+            matched.insert(entry.clone());
+        }
+    }
+
+    let base = instance::overrides_dir(dest);
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i)?;
+        if entry.is_dir() {
+            continue;
+        }
+        let full = entry.name().to_string();
+        let rel = match full.strip_prefix(game.as_str()) {
+            Some(r) if !r.is_empty() => r,
+            _ => continue,
+        };
+        if matched.contains(&full) || rel.ends_with(".disabled") {
+            continue;
+        }
+        let out = base.join(rel);
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut buf = Vec::new();
+        entry.read_to_end(&mut buf)?;
+        std::fs::write(out, buf)?;
+    }
+    Ok(mf)
+}
+
+fn mod_item(
+    name: String,
+    provider: ProviderId,
+    sources: BTreeMap<ProviderId, SourceFile>,
+) -> ContentItem {
+    ContentItem {
+        name,
+        project_type: ProjectType::Mod,
+        side: "auto".into(),
+        explicit: true,
+        disabled: false,
+        preferred: provider,
+        sources,
+        dependents: Vec::new(),
+        client_side: "required".into(),
+        server_side: "required".into(),
+    }
 }
 
 fn extract_overrides(

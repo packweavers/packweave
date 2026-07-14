@@ -13,6 +13,7 @@ use crate::ptype::ProjectType;
 
 pub const ISSUE_MISSING_VERSION: &str = "missing_version";
 pub const ISSUE_MISSING_DEPENDENCY: &str = "missing_dependency";
+pub const ISSUE_DISABLED_DEPENDENCY: &str = "disabled_dependency";
 pub const ISSUE_PROVIDER: &str = "provider";
 
 const FETCH_CONCURRENCY: usize = 8;
@@ -218,6 +219,7 @@ pub async fn resolve(
     cf: &CurseForge,
     manifest: &Manifest,
     authored: &[ContentItem],
+    excluded: &HashSet<String>,
 ) -> Result<ResolveOutput> {
     let mc = &manifest.minecraft;
     let loader = &manifest.loader;
@@ -230,6 +232,7 @@ pub async fn resolve(
     let mut issues: Vec<ResolveIssue> = Vec::new();
     let mut incompatible: Vec<Incompat> = Vec::new();
     let mut optional: Vec<OptionalDep> = Vec::new();
+    let mut disabled_edges: Vec<(String, String, ProviderId)> = Vec::new();
     let mut visited: HashSet<String> = HashSet::new();
     let mut alt_map: HashMap<String, Vec<(ProviderId, SourceFile)>> =
         HashMap::new();
@@ -361,12 +364,22 @@ pub async fn resolve(
                 Ok(r) => {
                     for dep in &r.deps {
                         match dep.kind {
-                            DepKind::Required => next.push(dep_target(
-                                dep.provider,
-                                dep.id.clone(),
-                                dep.pin.clone(),
-                                key.clone(),
-                            )),
+                            DepKind::Required => {
+                                if excluded.contains(&dep.id) {
+                                    disabled_edges.push((
+                                        key.clone(),
+                                        dep.id.clone(),
+                                        dep.provider,
+                                    ));
+                                } else {
+                                    next.push(dep_target(
+                                        dep.provider,
+                                        dep.id.clone(),
+                                        dep.pin.clone(),
+                                        key.clone(),
+                                    ));
+                                }
+                            }
                             DepKind::Optional => optional.push(OptionalDep {
                                 project_id: dep.id.clone(),
                                 provider: dep.provider,
@@ -408,6 +421,27 @@ pub async fn resolve(
         }
 
         frontier = next;
+    }
+
+    let mut by_disabled: HashMap<(String, ProviderId), BTreeSet<String>> =
+        HashMap::new();
+    for (parent, dep_id, prov) in disabled_edges {
+        if chosen.contains_key(&dep_id) {
+            continue;
+        }
+        by_disabled
+            .entry((dep_id, prov))
+            .or_default()
+            .insert(parent);
+    }
+    for ((dep_id, prov), parents) in by_disabled {
+        issues.push(ResolveIssue {
+            kind: ISSUE_DISABLED_DEPENDENCY.into(),
+            project_id: dep_id,
+            provider: prov,
+            detail: String::new(),
+            required_by: parents.into_iter().collect(),
+        });
     }
 
     let mut conflicts: Vec<VersionConflict> = Vec::new();

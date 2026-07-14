@@ -13,6 +13,7 @@
 		Plug,
 	} from '@lucide/svelte'
 	import ButtonStyled from './ui/ButtonStyled.svelte'
+	import FeatureTip from './ui/FeatureTip.svelte'
 	import { store } from '../lib/store.svelte'
 	import { contextMenu } from '../lib/contextmenu.svelte'
 	import { tooltip } from '../lib/tooltip'
@@ -282,6 +283,10 @@
 			</ButtonStyled>
 		</div>
 	{:else}
+	<FeatureTip id="instance" class="mb-3">
+		This is your live test setup. Play the linked instance, then pull the file changes you made
+		in-game back into the pack; or push pack changes out to it.
+	</FeatureTip>
 	<div class="flex items-center justify-between gap-2 pb-3 mb-2 border-b border-divider">
 		<button
 			class="inline-flex items-center gap-1 bg-transparent border-0 text-secondary cursor-pointer text-[0.78rem] hover:text-body"

@@ -114,13 +114,9 @@
 		},
 		{ separator: true },
 		{
-			label: mod.disabled
-				? 'Enable'
-				: mod.dependents.length
-					? 'Disable (required by another mod)'
-					: 'Disable',
+			label: mod.disabled ? 'Enable' : 'Disable',
 			icon: mod.disabled ? Eye : EyeOff,
-			disabled: store.busy || (!mod.disabled && mod.dependents.length > 0),
+			disabled: store.busy,
 			onSelect: () => store.setDisabled(mod.projectId, !mod.disabled),
 		},
 		{
@@ -128,7 +124,7 @@
 			icon: Trash2,
 			danger: true,
 			disabled: store.busy,
-			onSelect: () => store.removeMod(mod.projectId),
+			onSelect: () => store.requestDelete([mod.projectId]),
 		},
 	]}
 >
@@ -356,7 +352,7 @@
 				disabled={store.busy}
 				onclick={() => {
 					confirmRemove = false
-					store.removeMod(mod.projectId)
+					store.requestDelete([mod.projectId])
 				}}
 			>
 				Remove

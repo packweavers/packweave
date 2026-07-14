@@ -3,7 +3,8 @@ use std::collections::HashSet;
 
 use crate::lockfile::{DepType, Lockfile};
 use crate::resolver::{
-    ResolveOutput, ISSUE_MISSING_DEPENDENCY, ISSUE_MISSING_VERSION,
+    ResolveOutput, ISSUE_DISABLED_DEPENDENCY, ISSUE_MISSING_DEPENDENCY,
+    ISSUE_MISSING_VERSION,
 };
 
 fn join_names(names: &[String]) -> String {
@@ -77,6 +78,7 @@ pub fn build(
         let title;
         let detail;
         let fix;
+        let mut severity = "error";
         if issue.kind == ISSUE_MISSING_VERSION {
             title =
                 format!("{}: no compatible build", name_of(&issue.project_id));
@@ -99,6 +101,20 @@ pub fn build(
                 format!("Needed by {}, no build for {env}.", join_names(&names))
             };
             fix = None;
+        } else if issue.kind == ISSUE_DISABLED_DEPENDENCY {
+            severity = "warning";
+            title = format!("{} is disabled", name_of(&issue.project_id));
+            let names: Vec<String> =
+                issue.required_by.iter().map(|id| name_of(id)).collect();
+            detail = if names.is_empty() {
+                "Something in your pack needs this. Enable it, or remove what needs it.".into()
+            } else {
+                format!(
+                    "{} needs it. Enable it, or remove what needs it.",
+                    join_names(&names)
+                )
+            };
+            fix = None;
         } else {
             title = format!("Couldn’t load {}", name_of(&issue.project_id));
             detail = issue.detail.clone();
@@ -106,7 +122,7 @@ pub fn build(
         }
         items.push(Validation {
             id: format!("issue-{idx}"),
-            severity: "error".into(),
+            severity: severity.into(),
             title,
             detail,
             project_id: Some(issue.project_id.clone()),

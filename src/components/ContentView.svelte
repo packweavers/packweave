@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Boxes, ChevronDown, RefreshCw, Search, X } from '@lucide/svelte'
+	import { Boxes, ChevronDown, EyeOff, RefreshCw, Search, X } from '@lucide/svelte'
 	import Admonition from './ui/Admonition.svelte'
 	import ButtonStyled from './ui/ButtonStyled.svelte'
 	import ContentFilters from './content/ContentFilters.svelte'
@@ -8,11 +8,13 @@
 	import SourceModals from './content/SourceModals.svelte'
 	import UpdatesModal from './content/UpdatesModal.svelte'
 	import UnpublishedSection from './content/UnpublishedSection.svelte'
+	import FeatureTip from './ui/FeatureTip.svelte'
 	import { tooltip } from '../lib/tooltip'
 	import { store } from '../lib/store.svelte'
 	import { activeSource } from '../types'
 	import type { LockedMod, Severity } from '../types'
 	import { channelOf, sideValue, updateFor } from '../lib/mods'
+	import { visibleProblems, hiddenProblems, suppress, restoreAll } from '../lib/problems'
 
 	let { onadd }: { onadd?: () => void } = $props()
 
@@ -64,13 +66,16 @@
 
 	const chosen = $derived(store.chosenMods.filter(matches))
 	const deps = $derived(store.depMods.filter(matches))
+	const selectable = $derived([...chosen, ...deps])
 	const isEmpty = $derived((store.lockfile?.mods.length ?? 0) === 0)
 
 	let selected = $state(new Set<string>())
 	let selectAnchor = $state<number | null>(null)
 	let confirmBulkDelete = $state(false)
-	const selectedMods = $derived(chosen.filter((m) => selected.has(m.projectId)))
-	const allSelected = $derived(chosen.length > 0 && chosen.every((m) => selected.has(m.projectId)))
+	const selectedMods = $derived(selectable.filter((m) => selected.has(m.projectId)))
+	const allSelected = $derived(
+		selectable.length > 0 && selectable.every((m) => selected.has(m.projectId)),
+	)
 	const canUpdate = $derived(selectedMods.some((m) => !!updateFor(m)))
 	const canPin = $derived(
 		selectedMods.some((m) => !activeSource(m)?.pin && !!activeSource(m)?.versionId),
@@ -93,12 +98,12 @@
 	function selectRow(e: MouseEvent, index: number) {
 		const t = e.target as HTMLElement
 		if (t.closest('button, a, input, select, textarea, [role="menu"], [role="menuitem"]')) return
-		const id = chosen[index].projectId
+		const id = selectable[index].projectId
 		if (e.shiftKey && selectAnchor !== null) {
 			const lo = Math.min(selectAnchor, index)
 			const hi = Math.max(selectAnchor, index)
 			const next = new Set<string>()
-			for (let i = lo; i <= hi; i++) next.add(chosen[i].projectId)
+			for (let i = lo; i <= hi; i++) next.add(selectable[i].projectId)
 			selected = next
 		} else if (e.metaKey || e.ctrlKey) {
 			if (selected.has(id)) selected.delete(id)
@@ -123,8 +128,8 @@
 			clearSelection()
 			return
 		}
-		selected = new Set(chosen.map((m) => m.projectId))
-		selectAnchor = chosen.length ? 0 : null
+		selected = new Set(selectable.map((m) => m.projectId))
+		selectAnchor = selectable.length ? 0 : null
 		confirmBulkDelete = false
 	}
 	function bulkUpdate() {
@@ -149,9 +154,7 @@
 		clearSelection()
 	}
 	function bulkDisable() {
-		const ids = selectedMods
-			.filter((m) => !m.disabled && m.dependents.every((d) => selected.has(d)))
-			.map((m) => m.projectId)
+		const ids = selectedMods.filter((m) => !m.disabled).map((m) => m.projectId)
 		if (ids.length) store.bulkSetDisabled(ids, true)
 		clearSelection()
 	}
@@ -162,7 +165,7 @@
 	}
 	function bulkDelete() {
 		const ids = selectedMods.map((m) => m.projectId)
-		if (ids.length) store.bulkRemove(ids)
+		if (ids.length) store.requestDelete(ids)
 		clearSelection()
 	}
 
@@ -181,10 +184,9 @@
 	const order: Record<Severity, number> = { error: 0, warning: 1, info: 2, ok: 3 }
 	const admonType = { error: 'error', warning: 'warning', info: 'info', ok: 'success' } as const
 	const problems = $derived(
-		[...store.validations]
-			.filter((v) => v.severity === 'error' || v.severity === 'warning')
-			.sort((a, b) => order[a.severity] - order[b.severity]),
+		[...visibleProblems()].sort((a, b) => order[a.severity] - order[b.severity]),
 	)
+	const hidden = $derived(hiddenProblems())
 	let showProblems = $state(true)
 	let showDeps = $state(true)
 
@@ -202,19 +204,21 @@
 
 <div class="h-full flex flex-col min-h-0">
 	{#if isEmpty}
-		<div class="flex-1 flex flex-col items-center justify-center text-center gap-[0.4rem] p-8">
-			<div
-				class="w-[84px] h-[84px] grid place-items-center rounded-xl bg-bg-inset text-secondary mb-[0.6rem]"
-			>
-				<Boxes size={40} strokeWidth={1.5} />
+		<div class="flex-1 overflow-y-auto flex flex-col">
+			<div class="flex-1 flex flex-col items-center justify-center text-center gap-[0.4rem] p-8">
+				<div
+					class="w-[84px] h-[84px] grid place-items-center rounded-xl bg-bg-inset text-secondary mb-[0.6rem]"
+				>
+					<Boxes size={40} strokeWidth={1.5} />
+				</div>
+				<h2 class="text-[1.3rem]">Nothing here yet</h2>
+				<p class="text-secondary mb-4 max-w-[340px]">
+					Add mods, resource packs, or shaders to get started.
+				</p>
+				<ButtonStyled color="brand" size="large" disabled={store.busy} onclick={() => onadd?.()}>
+					Add content
+				</ButtonStyled>
 			</div>
-			<h2 class="text-[1.3rem]">Nothing here yet</h2>
-			<p class="text-secondary mb-4 max-w-[340px]">
-				Add mods, resource packs, or shaders to get started.
-			</p>
-			<ButtonStyled color="brand" size="large" disabled={store.busy} onclick={() => onadd?.()}>
-				Add content
-			</ButtonStyled>
 		</div>
 	{:else}
 		<div
@@ -241,7 +245,7 @@
 						disabled={store.busy}
 						onclick={() => (showUpdates = true)}
 					>
-						<RefreshCw size={13} /> Update all<span
+						<RefreshCw size={13} /> Updates<span
 							class="bg-white/[0.22] rounded-max px-[0.4rem] py-[0.02rem] text-[0.68rem] ml-[0.1rem]"
 							>{updatableMods.length}</span
 						>
@@ -263,6 +267,11 @@
 		</div>
 
 		<div class="flex-1 overflow-y-auto px-[1.1rem] pt-[0.6rem] pb-8 max-w-[900px] w-full mx-auto">
+			<FeatureTip id="content" class="mb-2">
+				View all your downloaded content. Search Modrinth and CurseForge to add mods, resource
+				packs, and shaders. Dependencies resolve automatically, and updates show their impact before
+				you apply them.
+			</FeatureTip>
 			{#if selectedMods.length}
 				<div
 					class="sticky top-0 z-10 flex items-center flex-wrap gap-2 mb-2 bg-bg-super-raised border border-divider rounded-md shadow-raised px-3 py-2"
@@ -321,25 +330,43 @@
 					{#if showProblems}
 						<div class="flex flex-col gap-2 mt-[0.4rem] mb-[0.8rem]">
 							{#each problems as v (v.id)}
-								<Admonition type={admonType[v.severity]} title={v.title}>
-									{v.detail}
-									{#if v.fix && v.fix.kind !== 'none'}
-										<div class="mt-2">
-											<ButtonStyled
-												size="small"
-												type="outlined"
-												disabled={store.busy}
-												onclick={() => store.applyFix(v.fix!)}
-											>
-												{v.fix.label}
-											</ButtonStyled>
-										</div>
-									{/if}
-								</Admonition>
+								<div class="relative group">
+									<Admonition type={admonType[v.severity]} title={v.title}>
+										{v.detail}
+										{#if v.fix && v.fix.kind !== 'none'}
+											<div class="mt-2">
+												<ButtonStyled
+													size="small"
+													type="outlined"
+													disabled={store.busy}
+													onclick={() => store.applyFix(v.fix!)}
+												>
+													{v.fix.label}
+												</ButtonStyled>
+											</div>
+										{/if}
+									</Admonition>
+									<button
+										class="absolute top-[0.55rem] right-[0.55rem] grid place-items-center w-6 h-6 rounded-sm text-secondary bg-transparent border-none cursor-pointer opacity-0 group-hover:opacity-100 hover:bg-button-bg hover:text-contrast"
+										use:tooltip={'Hide this problem'}
+										aria-label="Hide this problem"
+										onclick={() => suppress(v)}
+									>
+										<EyeOff size={14} />
+									</button>
+								</div>
 							{/each}
 						</div>
 					{/if}
 				</div>
+			{/if}
+			{#if hidden.length}
+				<button
+					class="bg-transparent border-none text-secondary text-[0.74rem] cursor-pointer px-[0.2rem] py-[0.2rem] mb-[0.4rem] hover:text-body"
+					onclick={() => restoreAll()}
+				>
+					Show {hidden.length} hidden {hidden.length === 1 ? 'problem' : 'problems'}
+				</button>
 			{/if}
 
 			{#if chosen.length}
@@ -378,8 +405,15 @@
 				</button>
 				{#if showDeps}
 					<ul class="list-none m-0 p-0">
-						{#each deps as mod (mod.projectId)}
-							<DepRow {mod} {nameOf} />
+						{#each deps as mod, depIndex (mod.projectId)}
+							<DepRow
+								{mod}
+								index={chosen.length + depIndex}
+								selected={selected.has(mod.projectId)}
+								{nameOf}
+								onselect={selectRow}
+								onkeyrow={keyRow}
+							/>
 						{/each}
 					</ul>
 				{/if}

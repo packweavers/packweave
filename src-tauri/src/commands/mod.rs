@@ -69,14 +69,24 @@ pub(crate) async fn do_resolve(
     dir: &Path,
 ) -> anyhow::Result<PackResolved> {
     let manifest = manifest::read(dir)?;
-    let authored = content::authored(dir);
-    let out = resolver::resolve(mr, cf, &manifest, &authored).await?;
+    let all = content::read_all(dir);
+    let authored: Vec<content::ContentItem> = all
+        .iter()
+        .filter(|i| i.explicit && !i.disabled)
+        .cloned()
+        .collect();
+    let excluded: std::collections::HashSet<String> = all
+        .iter()
+        .filter(|i| i.disabled)
+        .map(|i| i.project_id())
+        .collect();
+    let out =
+        resolver::resolve(mr, cf, &manifest, &authored, &excluded).await?;
     let mut combined = out.locked.clone();
     let resolved: std::collections::HashSet<String> =
         out.locked.iter().map(|i| i.project_id()).collect();
     combined.extend(
-        content::read_all(dir)
-            .into_iter()
+        all.into_iter()
             .filter(|i| i.disabled && !resolved.contains(&i.project_id())),
     );
     content::write_resolved(dir, &manifest, &combined)?;

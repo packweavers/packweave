@@ -91,8 +91,8 @@ export const api = {
 		return invoke('add_content', { path, provider, projectId, slug, name, projectType, pin, url })
 	},
 
-	bulkLookup(path: string, text: string): Promise<BulkLookup> {
-		return invoke('bulk_lookup', { path, text })
+	bulkLookup(path: string, provider: string, text: string): Promise<BulkLookup> {
+		return invoke('bulk_lookup', { path, provider, text })
 	},
 
 	addContentBulk(path: string, items: BulkCandidate[]): Promise<PackResolved> {
@@ -119,6 +119,14 @@ export const api = {
 
 	removeMod(path: string, projectId: string): Promise<PackResolved> {
 		return invoke('remove_mod', { path, projectId })
+	},
+
+	deleteContent(path: string, keys: string[]): Promise<PackResolved> {
+		return invoke('delete_content', { path, keys })
+	},
+
+	setAsDependency(path: string, projectId: string): Promise<PackResolved> {
+		return invoke('set_as_dependency', { path, projectId })
 	},
 
 	promoteMod(path: string, projectId: string): Promise<PackResolved> {
@@ -304,6 +312,10 @@ export const api = {
 
 	detectInstances(): Promise<DetectedInstance[]> {
 		return invoke('detect_instances')
+	},
+
+	resolveInstanceFolder(path: string): Promise<DetectedInstance> {
+		return invoke('resolve_instance_folder', { path })
 	},
 
 	checkUpdate(): Promise<{ version: string; notes: string } | null> {
@@ -636,4 +648,10 @@ export function openCurseforgePage(slug: string, projectType: string): Promise<v
 				? 'shaders'
 				: 'mc-mods'
 	return openUrl(`https://www.curseforge.com/minecraft/${cls}/${slug}`)
+}
+
+export const GUIDES_URL = 'https://packweave.com/guides'
+
+export function openGuides(): Promise<void> {
+	return openUrl(GUIDES_URL)
 }

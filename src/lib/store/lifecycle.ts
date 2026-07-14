@@ -57,6 +57,7 @@ export async function createPack(
 	loader: string,
 	loaderVersion: string | null,
 	instanceDir: string | null = null,
+	iconPath: string | null = null,
 ): Promise<boolean> {
 	const parent = await pickFolder('Choose a folder for this pack')
 	if (!parent) return false
@@ -74,6 +75,13 @@ export async function createPack(
 	try {
 		const manifest = await api.createPack(dir, name.trim(), minecraft, loader, loaderVersion)
 		s.pack = { dir, manifest }
+		if (iconPath) {
+			try {
+				await api.setPackIcon(dir, iconPath)
+			} catch {
+				/* icon is best-effort */
+			}
+		}
 		clearEnrich()
 		resetView()
 		applyResolved(await api.resolvePack(dir))

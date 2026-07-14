@@ -5,7 +5,6 @@ use std::collections::HashSet;
 
 #[derive(Debug, Clone)]
 pub struct ParsedRef {
-    pub provider: Option<ProviderId>,
     pub reference: String,
     pub project_type: Option<ProjectType>,
     pub raw: String,
@@ -70,7 +69,11 @@ fn is_slug(s: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-fn parse_url(token: &str) -> Option<ParsedRef> {
+// Pulls a project slug (and a type hint) out of a Modrinth or CurseForge URL,
+// regardless of which host it points at. The list is resolved against a single
+// provider chosen by the caller, so the host in the link only matters for
+// recognizing the slug — never for which API we talk to.
+fn parse_url(token: &str) -> Option<(String, ProjectType)> {
     let lower = token.to_lowercase();
     if let Some(idx) = lower.find("modrinth.com/") {
         let rest = &token[idx + "modrinth.com/".len()..];
@@ -81,12 +84,7 @@ fn parse_url(token: &str) -> Option<ParsedRef> {
         if slug.is_empty() {
             return None;
         }
-        return Some(ParsedRef {
-            provider: Some(ProviderId::Modrinth),
-            reference: slug,
-            project_type: Some(ptype),
-            raw: token.to_string(),
-        });
+        return Some((slug, ptype));
     }
     if let Some(idx) = lower.find("curseforge.com/minecraft/") {
         let rest = &token[idx + "curseforge.com/minecraft/".len()..];
@@ -97,12 +95,7 @@ fn parse_url(token: &str) -> Option<ParsedRef> {
         if slug.is_empty() {
             return None;
         }
-        return Some(ParsedRef {
-            provider: Some(ProviderId::Curseforge),
-            reference: slug,
-            project_type: Some(ptype),
-            raw: token.to_string(),
-        });
+        return Some((slug, ptype));
     }
     None
 }
@@ -118,25 +111,27 @@ pub fn parse_refs(text: &str) -> Vec<ParsedRef> {
         let tokens: Vec<&str> = line.split_whitespace().collect();
         let mut had_url = false;
         for tok in &tokens {
-            if let Some(r) = parse_url(tok) {
+            if let Some((slug, ptype)) = parse_url(tok) {
                 had_url = true;
-                let key =
-                    format!("{:?}:{}", r.provider, r.reference.to_lowercase());
-                if seen.insert(key) {
-                    out.push(r);
+                if seen.insert(slug.to_lowercase()) {
+                    out.push(ParsedRef {
+                        reference: slug,
+                        project_type: Some(ptype),
+                        raw: tok.to_string(),
+                    });
                 }
             }
         }
-        if !had_url && tokens.len() == 1 && is_slug(tokens[0]) {
-            let key = format!("None:{}", tokens[0].to_lowercase());
-            if seen.insert(key) {
-                out.push(ParsedRef {
-                    provider: None,
-                    reference: tokens[0].to_string(),
-                    project_type: None,
-                    raw: tokens[0].to_string(),
-                });
-            }
+        if !had_url
+            && tokens.len() == 1
+            && is_slug(tokens[0])
+            && seen.insert(tokens[0].to_lowercase())
+        {
+            out.push(ParsedRef {
+                reference: tokens[0].to_string(),
+                project_type: None,
+                raw: tokens[0].to_string(),
+            });
         }
     }
     out
@@ -147,17 +142,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_modrinth_and_curseforge_urls_in_prose() {
+    fn extracts_slugs_from_either_host_in_prose() {
         let text = "try https://modrinth.com/mod/sodium and \
                     www.curseforge.com/minecraft/mc-mods/jei plus a shader \
                     https://modrinth.com/shader/complementary-reimagined";
         let refs = parse_refs(text);
         assert_eq!(refs.len(), 3);
-        assert_eq!(refs[0].provider, Some(ProviderId::Modrinth));
         assert_eq!(refs[0].reference, "sodium");
         assert_eq!(refs[0].project_type, Some(ProjectType::Mod));
-        assert_eq!(refs[1].provider, Some(ProviderId::Curseforge));
         assert_eq!(refs[1].reference, "jei");
+        assert_eq!(refs[1].project_type, Some(ProjectType::Mod));
+        assert_eq!(refs[2].reference, "complementary-reimagined");
         assert_eq!(refs[2].project_type, Some(ProjectType::Shader));
     }
 
@@ -168,13 +163,14 @@ mod tests {
         let slugs: Vec<&str> =
             refs.iter().map(|r| r.reference.as_str()).collect();
         assert_eq!(slugs, vec!["sodium", "lithium", "fabric-api"]);
-        assert!(refs.iter().all(|r| r.provider.is_none()));
+        assert!(refs.iter().all(|r| r.project_type.is_none()));
     }
 
     #[test]
-    fn dedupes_and_strips_query() {
+    fn dedupes_slug_across_hosts_and_strips_query() {
         let refs = parse_refs(
-            "https://modrinth.com/mod/sodium?foo=1\nhttps://modrinth.com/mod/sodium/versions",
+            "https://modrinth.com/mod/sodium?foo=1\n\
+             https://www.curseforge.com/minecraft/mc-mods/sodium\nsodium",
         );
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0].reference, "sodium");

@@ -8,7 +8,7 @@ use crate::content::{self, ContentItem};
 use crate::curseforge::CurseForge;
 use crate::dropped;
 use crate::instance;
-use crate::lockfile::{self, SourceFile};
+use crate::lockfile::SourceFile;
 use crate::manifest;
 use crate::modrinth::Modrinth;
 use crate::providers::{self, ProviderId};
@@ -136,41 +136,35 @@ pub async fn bulk_lookup(
     state: State<'_, Modrinth>,
     cf: State<'_, CurseForge>,
     path: String,
+    provider: ProviderId,
     text: String,
 ) -> Result<bulkadd::BulkLookup, String> {
     let dir = PathBuf::from(&path);
     let existing: std::collections::HashSet<String> = content::read_all(&dir)
         .iter()
         .filter(|i| i.explicit)
-        .filter_map(|i| i.active().and_then(|s| s.id.clone()))
+        .filter_map(|i| i.sources.get(&provider).and_then(|s| s.id.clone()))
         .collect();
     let mr = state.inner();
     let cfp = cf.inner();
     let futs = bulkadd::parse_refs(&text).into_iter().map(|r| async move {
-        let candidates: Vec<ProviderId> = match r.provider {
-            Some(p) => vec![p],
-            None => vec![ProviderId::Modrinth, ProviderId::Curseforge],
-        };
-        for prov in candidates {
-            if let Some(p) = providers::by_id(prov, mr, cfp) {
-                if let Ok(proj) = p.lookup(&r.reference).await {
-                    let project_type =
-                        r.project_type.unwrap_or(proj.project_type);
-                    return Ok(bulkadd::BulkCandidate {
-                        provider: prov,
-                        project_id: proj.id,
-                        slug: proj.slug,
-                        name: proj.name,
-                        project_type,
-                        icon_url: proj.icon_url,
-                        raw: r.raw,
-                    });
-                }
+        if let Some(p) = providers::by_id(provider, mr, cfp) {
+            if let Ok(proj) = p.lookup(&r.reference).await {
+                let project_type = r.project_type.unwrap_or(proj.project_type);
+                return Ok(bulkadd::BulkCandidate {
+                    provider,
+                    project_id: proj.id,
+                    slug: proj.slug,
+                    name: proj.name,
+                    project_type,
+                    icon_url: proj.icon_url,
+                    raw: r.raw,
+                });
             }
         }
         Err(bulkadd::BulkFailure {
             raw: r.raw,
-            reason: "Not found on Modrinth or CurseForge".into(),
+            reason: format!("Not found on {}", provider.label()),
         })
     });
     let mut out = bulkadd::BulkLookup::default();
@@ -263,7 +257,7 @@ pub async fn remove_mod(
     project_id: String,
 ) -> Result<PackResolved, String> {
     let dir = PathBuf::from(&path);
-    content::remove_item(&dir, &project_id).map_err(es)?;
+    content::remove_user_item(&dir, &project_id).map_err(es)?;
     do_resolve(state.inner(), cf.inner(), &dir)
         .await
         .map_err(es)
@@ -299,6 +293,34 @@ pub async fn promote_mod(
 }
 
 #[tauri::command]
+pub async fn set_as_dependency(
+    state: State<'_, Modrinth>,
+    cf: State<'_, CurseForge>,
+    path: String,
+    project_id: String,
+) -> Result<PackResolved, String> {
+    let dir = PathBuf::from(&path);
+    content::set_explicit(&dir, &project_id, false).map_err(es)?;
+    do_resolve(state.inner(), cf.inner(), &dir)
+        .await
+        .map_err(es)
+}
+
+#[tauri::command]
+pub async fn delete_content(
+    state: State<'_, Modrinth>,
+    cf: State<'_, CurseForge>,
+    path: String,
+    keys: Vec<String>,
+) -> Result<PackResolved, String> {
+    let dir = PathBuf::from(&path);
+    content::delete_content(&dir, &keys).map_err(es)?;
+    do_resolve(state.inner(), cf.inner(), &dir)
+        .await
+        .map_err(es)
+}
+
+#[tauri::command]
 pub async fn set_content_disabled(
     state: State<'_, Modrinth>,
     cf: State<'_, CurseForge>,
@@ -307,15 +329,6 @@ pub async fn set_content_disabled(
     disabled: bool,
 ) -> Result<PackResolved, String> {
     let dir = PathBuf::from(&path);
-    if disabled {
-        if let Ok(lock) = lockfile::read(&dir) {
-            if lock.mods.iter().any(|m| {
-                m.project_id == key && !m.disabled && !m.dependents.is_empty()
-            }) {
-                return Err("Another mod depends on this. Disable or remove that one first.".into());
-            }
-        }
-    }
     content::set_disabled(&dir, &key, disabled).map_err(es)?;
     do_resolve(state.inner(), cf.inner(), &dir)
         .await
@@ -425,21 +438,6 @@ pub async fn set_content_disabled_bulk(
     disabled: bool,
 ) -> Result<PackResolved, String> {
     let dir = PathBuf::from(&path);
-    if disabled {
-        if let Ok(lock) = lockfile::read(&dir) {
-            let blocked = lock.mods.iter().any(|m| {
-                keys.contains(&m.project_id)
-                    && !m.disabled
-                    && m.dependents.iter().any(|d| !keys.contains(d))
-            });
-            if blocked {
-                return Err(
-                    "Some selected mods are required by mods you're keeping."
-                        .into(),
-                );
-            }
-        }
-    }
     for key in &keys {
         content::set_disabled(&dir, key, disabled).map_err(es)?;
     }
@@ -457,7 +455,7 @@ pub async fn remove_mods_bulk(
 ) -> Result<PackResolved, String> {
     let dir = PathBuf::from(&path);
     for key in &keys {
-        content::remove_item(&dir, key).map_err(es)?;
+        content::remove_user_item(&dir, key).map_err(es)?;
     }
     do_resolve(state.inner(), cf.inner(), &dir)
         .await
@@ -473,11 +471,18 @@ pub async fn update_impact(
 ) -> Result<resolver::ImpactReport, String> {
     let dir = PathBuf::from(&path);
     let manifest = manifest::read(&dir).map_err(es)?;
+    let excluded: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
     let base_authored = content::authored(&dir);
-    let base =
-        resolver::resolve(state.inner(), cf.inner(), &manifest, &base_authored)
-            .await
-            .map_err(es)?;
+    let base = resolver::resolve(
+        state.inner(),
+        cf.inner(),
+        &manifest,
+        &base_authored,
+        &excluded,
+    )
+    .await
+    .map_err(es)?;
     let base_problems: std::collections::HashSet<String> =
         resolver::impact_problems(&base).into_iter().collect();
 
@@ -496,10 +501,15 @@ pub async fn update_impact(
             }
         }
     }
-    let out =
-        resolver::resolve(state.inner(), cf.inner(), &manifest, &authored)
-            .await
-            .map_err(es)?;
+    let out = resolver::resolve(
+        state.inner(),
+        cf.inner(),
+        &manifest,
+        &authored,
+        &excluded,
+    )
+    .await
+    .map_err(es)?;
     let problems: Vec<String> = resolver::impact_problems(&out)
         .into_iter()
         .filter(|p| !base_problems.contains(p))

@@ -30,6 +30,7 @@
 	import ButtonStyled from './ui/ButtonStyled.svelte'
 	import Modal from './ui/Modal.svelte'
 	import Dropdown from './ui/Dropdown.svelte'
+	import FeatureTip from './ui/FeatureTip.svelte'
 	import SemanticDiff from './SemanticDiff.svelte'
 	import ChangelogTab from './source/ChangelogTab.svelte'
 	import { api } from '../api'
@@ -540,7 +541,11 @@
 			class="flex-1 flex flex-col items-center justify-center gap-[0.6rem] text-secondary text-center"
 		>
 			<GitBranch size={30} />
-			<p>This pack isn't a Git repository yet.</p>
+			<p class="text-contrast font-semibold text-[0.95rem] m-0">Track this pack with Git</p>
+			<p class="max-w-[26rem] text-[0.84rem] leading-[1.5] m-0">
+				Turn your pack into a Git repository to save versions you can revert to, branch to try
+				things out, and push it anywhere to back up or share.
+			</p>
 			<ButtonStyled color="brand" disabled={store.busy} onclick={() => store.gitInit().then(loadAux)}>
 				<GitBranch size={15} /> Initialize repository
 			</ButtonStyled>
@@ -1072,6 +1077,11 @@
 				>
 			</div>
 		</header>
+
+		<FeatureTip id="source" class="mx-4 mt-[0.6rem]">
+			Each commit is a snapshot of your whole pack you can return to. Commit changes below, browse
+			history, and branch or push from the controls above.
+		</FeatureTip>
 
 		{#if store.git.conflicts}
 			<div

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import {
 		Boxes,
+		BookOpen,
 		FolderOpen,
 		FolderTree,
 		GitBranch,
@@ -14,7 +15,7 @@
 		X,
 	} from '@lucide/svelte'
 	import type { Component } from 'svelte'
-	import { revealFolder } from '../api'
+	import { openGuides, revealFolder } from '../api'
 	import { store } from '../lib/store.svelte'
 
 	let {
@@ -66,7 +67,7 @@
 			label: 'Go to Source control',
 			hint: '⌘4',
 			icon: GitBranch,
-			enabled: !!store.git?.isRepo,
+			enabled: true,
 			run: () => store.setView('source'),
 		},
 		{
@@ -128,6 +129,13 @@
 			icon: Settings,
 			enabled: true,
 			run: () => (store.settingsOpen = true),
+		},
+		{
+			id: 'guides',
+			label: 'Guides',
+			icon: BookOpen,
+			enabled: true,
+			run: () => void openGuides(),
 		},
 		{
 			id: 'close-pack',

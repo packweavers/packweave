@@ -179,6 +179,65 @@ export async function bulkRemove(keys: string[]) {
 	}
 }
 
+function stillNeeded(ids: string[]): string[] {
+	const mods = s.lockfile?.mods ?? []
+	const byId = new Map(mods.map((m) => [m.projectId, m]))
+	const idSet = new Set(ids)
+	return ids.filter((id) => {
+		const m = byId.get(id)
+		if (!m) return false
+		return m.dependents.some((d) => {
+			const dep = byId.get(d)
+			return !idSet.has(d) && !!dep && !dep.disabled
+		})
+	})
+}
+
+export function requestDelete(ids: string[]) {
+	if (!ids.length) return
+	if (stillNeeded(ids).length) s.deletePrompt = { ids }
+	else void performDelete(ids)
+}
+
+export function dismissDeletePrompt() {
+	s.deletePrompt = null
+}
+
+export async function confirmDeletePrompt(mode: 'delete' | 'dependency') {
+	const ids = s.deletePrompt?.ids ?? []
+	s.deletePrompt = null
+	if (!ids.length) return
+	if (mode === 'dependency') await setAsDependency(ids[0])
+	else await performDelete(ids)
+}
+
+async function performDelete(ids: string[]) {
+	if (!s.pack) return
+	const before = depSnapshot()
+	s.busy = true
+	try {
+		applyResolved(await api.deleteContent(s.pack.dir, ids))
+		reportPrunedDeps(before, ids)
+	} catch (e) {
+		notify('error', `${e}`)
+	} finally {
+		s.busy = false
+	}
+}
+
+export async function setAsDependency(projectId: string) {
+	if (!s.pack) return
+	s.busy = true
+	try {
+		applyResolved(await api.setAsDependency(s.pack.dir, projectId))
+		notify('success', 'Moved to dependencies')
+	} catch (e) {
+		notify('error', `${e}`)
+	} finally {
+		s.busy = false
+	}
+}
+
 export async function convertSearch(
 	projectId: string,
 	target: string,

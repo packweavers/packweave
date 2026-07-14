@@ -30,10 +30,18 @@
 	let error = $state<string | null>(null)
 	let urlValue = $state('')
 	let urlName = $state('')
+	let urlBusy = $state(false)
 	let reqId = 0
 
 	const sourceLabel = $derived(store.providerName(source))
 	const canOpen = $derived(source === 'modrinth' || source === 'curseforge')
+
+	function projectHost(u: string): 'modrinth' | 'curseforge' | null {
+		const l = u.toLowerCase()
+		if (l.includes('modrinth.com/')) return 'modrinth'
+		if (l.includes('curseforge.com/minecraft/')) return 'curseforge'
+		return null
+	}
 
 	async function runSearch() {
 		if (source === 'url') {
@@ -78,11 +86,36 @@
 		else if (source === 'modrinth') openModrinthPage(hit.slug)
 	}
 
-	function addUrl() {
+	async function addUrl() {
 		const u = urlValue.trim()
-		if (!u) return
+		if (!u || !store.pack) return
+		// A pasted Modrinth/CurseForge project link should become a real tracked
+		// mod, not a raw file — resolve it through the matching provider.
+		const host = projectHost(u)
+		if (host) {
+			urlBusy = true
+			try {
+				const res = await api.bulkLookup(store.pack.dir, host, u)
+				if (res.found.length) {
+					await store.bulkAdd(res.found)
+					urlValue = ''
+					urlName = ''
+					return
+				}
+				store.notify(
+					'error',
+					`Couldn't find that project on ${host === 'modrinth' ? 'Modrinth' : 'CurseForge'}.`,
+				)
+				return
+			} catch (e) {
+				store.notify('error', `${e}`)
+				return
+			} finally {
+				urlBusy = false
+			}
+		}
 		const guessed = u.split('/').pop()?.replace(/\.[^.]+$/, '') || 'file'
-		store.addContent('url', {
+		await store.addContent('url', {
 			projectId: '',
 			slug: '',
 			name: urlName.trim() || guessed,
@@ -106,16 +139,25 @@
 	})
 
 	let mode = $state<'search' | 'bulk'>('search')
+	let bulkProvider = $state('modrinth')
 	let bulkText = $state('')
 	let bulkResult = $state<BulkLookup | null>(null)
 	let bulkSelected = $state(new Set<string>())
 	let bulkBusy = $state(false)
 
+	const bulkProviderLabel = $derived(store.providerName(bulkProvider))
+
+	function openBulk() {
+		bulkProvider = source
+		bulkResult = null
+		mode = 'bulk'
+	}
+
 	async function bulkFind() {
 		if (!store.pack || !bulkText.trim()) return
 		bulkBusy = true
 		try {
-			bulkResult = await api.bulkLookup(store.pack.dir, bulkText)
+			bulkResult = await api.bulkLookup(store.pack.dir, bulkProvider, bulkText)
 			bulkSelected = new Set(bulkResult.found.map((c) => c.projectId))
 		} catch (e) {
 			store.notify('error', `${e}`)
@@ -149,7 +191,9 @@
 		<div class="flex items-center gap-[0.6rem] px-4 py-[0.85rem] border-b border-divider text-secondary">
 			{#if mode === 'bulk'}
 				<ClipboardList size={18} />
-				<span class="flex-1 text-contrast text-[0.95rem]">Paste a list of links to add at once</span>
+				<span class="flex-1 text-contrast text-[0.95rem]"
+					>Paste a list · add to {bulkProviderLabel}</span
+				>
 			{:else}
 				{#if source !== 'url'}
 					<Search size={18} />
@@ -169,7 +213,7 @@
 					<input
 						bind:value={urlValue}
 						class="flex-1 bg-transparent border-none text-contrast text-[0.95rem] outline-none"
-						placeholder="Paste a direct download URL (.jar / .zip)…"
+						placeholder="Paste a Modrinth/CurseForge link, or a direct .jar / .zip URL…"
 						autofocus
 						spellcheck="false"
 						onkeydown={(e) => e.key === 'Enter' && addUrl()}
@@ -214,12 +258,14 @@
 						{t.label}
 					</button>
 				{/each}
-				<button
-					class="inline-flex items-center gap-1 border-none bg-transparent text-secondary text-[0.74rem] px-[0.5rem] py-[0.3rem] rounded-max cursor-pointer hover:text-body hover:bg-button-bg ml-2"
-					onclick={() => (mode = 'bulk')}
-				>
-					<ClipboardList size={13} /> Paste a list
-				</button>
+				{#if source !== 'url'}
+					<button
+						class="inline-flex items-center gap-1 border-none bg-transparent text-secondary text-[0.74rem] px-[0.5rem] py-[0.3rem] rounded-max cursor-pointer hover:text-body hover:bg-button-bg ml-2"
+						onclick={openBulk}
+					>
+						<ClipboardList size={13} /> Paste a list
+					</button>
+				{/if}
 			{/if}
 			<span class="ml-auto text-[0.72rem] text-secondary">{store.minecraft} · {store.loader}</span>
 		</div>
@@ -230,7 +276,7 @@
 					<textarea
 						bind:value={bulkText}
 						rows="5"
-						placeholder="Paste Modrinth / CurseForge links (or slugs, one per line). Surrounding text is fine. It finds every link."
+						placeholder="Paste any combination of mod links and slugs. Surrounding text is fine."
 						class="w-full bg-bg-inset border border-divider text-contrast rounded-md px-[0.65rem] py-2 text-[0.84rem] outline-none focus:border-brand resize-y font-mono leading-[1.5]"
 						spellcheck="false"
 					></textarea>
@@ -312,12 +358,17 @@
 					spellcheck="false"
 				/>
 				<div class="self-start">
-					<ButtonStyled color="brand" disabled={!urlValue.trim() || store.busy} onclick={addUrl}>
-						<Plus size={15} /> Add file
+					<ButtonStyled
+						color="brand"
+						disabled={!urlValue.trim() || store.busy || urlBusy}
+						onclick={addUrl}
+					>
+						<Plus size={15} /> {urlBusy ? 'Adding…' : 'Add'}
 					</ButtonStyled>
 				</div>
 				<p class="m-0 text-[0.74rem] text-secondary leading-[1.5]">
-					Bundled as an override. Most platforms reject these, so prefer Modrinth or CurseForge.
+					Paste a Modrinth or CurseForge mod link and it'll be tracked. A direct link is bundled as
+					an override instead.
 				</p>
 			</div>
 		{:else}

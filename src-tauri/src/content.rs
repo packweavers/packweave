@@ -187,6 +187,41 @@ pub fn remove_item(pack_dir: &Path, key: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn remove_user_item(pack_dir: &Path, key: &str) -> Result<()> {
+    delete_content(pack_dir, std::slice::from_ref(&key.to_string()))
+}
+
+pub fn delete_content(pack_dir: &Path, keys: &[String]) -> Result<()> {
+    let items = read_all(pack_dir);
+    let target: std::collections::HashSet<String> = items
+        .iter()
+        .filter(|it| keys.iter().any(|k| matches(it, k)))
+        .map(|it| it.project_id())
+        .collect();
+    let enabled: std::collections::HashSet<String> = items
+        .iter()
+        .filter(|i| !i.disabled)
+        .map(|i| i.project_id())
+        .collect();
+    for mut item in items {
+        if !target.contains(&item.project_id()) {
+            continue;
+        }
+        let needed = item
+            .dependents
+            .iter()
+            .any(|d| !target.contains(d) && enabled.contains(d));
+        if needed {
+            item.disabled = true;
+            add_item(pack_dir, &item)?;
+        } else {
+            let p = item_path(pack_dir, item.project_type, &file_slug(&item));
+            let _ = std::fs::remove_file(p);
+        }
+    }
+    Ok(())
+}
+
 pub fn set_explicit(
     pack_dir: &Path,
     key: &str,

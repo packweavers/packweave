@@ -11,6 +11,8 @@
 	import InstanceView from './components/InstanceView.svelte'
 	import SourceView from './components/SourceView.svelte'
 	import NewPackModal from './components/NewPackModal.svelte'
+	import StartPackModal from './components/StartPackModal.svelte'
+	import IntroModal from './components/IntroModal.svelte'
 	import SettingsModal from './components/SettingsModal.svelte'
 	import ExportModal from './components/ExportModal.svelte'
 	import InstancePicker from './components/InstancePicker.svelte'
@@ -18,6 +20,7 @@
 	import SearchPanel from './components/SearchPanel.svelte'
 	import CloneModal from './components/CloneModal.svelte'
 	import AuthModal from './components/AuthModal.svelte'
+	import DeleteConfirm from './components/content/DeleteConfirm.svelte'
 	import ToastHost from './components/ToastHost.svelte'
 	import CommandPalette from './components/CommandPalette.svelte'
 	import DropModal from './components/DropModal.svelte'
@@ -27,10 +30,13 @@
 	import { fileFind } from './lib/filefind.svelte'
 	import type { DetectedInstance, DroppedFile } from './types'
 
+	let showStart = $state(false)
 	let showNew = $state(false)
 	let showClone = $state(false)
 	let showExport = $state(false)
 	let showLink = $state(false)
+	let showPickForNew = $state(false)
+	let newInstance = $state<DetectedInstance | null>(null)
 	let showAdd = $state(false)
 	let showFind = $state(false)
 	let showPalette = $state(false)
@@ -39,12 +45,38 @@
 	let fileToOpen = $state<string | undefined>(undefined)
 	let filesKey = $state(0)
 
+	const showIntro = $derived(
+		!store.hasPack && !store.getPref('introSeen', false) && store.recents.length === 0,
+	)
+
 	$effect(() => {
 		if (store.hasPack) {
+			showStart = false
 			showNew = false
 			showClone = false
 		}
 	})
+
+	function onStartPick(choice: 'instance' | 'scratch' | 'import' | 'clone' | 'open') {
+		if (choice === 'scratch') {
+			newInstance = null
+			showNew = true
+		} else if (choice === 'instance') {
+			showPickForNew = true
+		} else if (choice === 'import') {
+			void store.importPack()
+		} else if (choice === 'clone') {
+			showClone = true
+		} else if (choice === 'open') {
+			void store.openPack()
+		}
+	}
+
+	function onPickForNew(inst: DetectedInstance) {
+		showPickForNew = false
+		newInstance = inst
+		showNew = true
+	}
 
 	onMount(() => {
 		store.initUi()
@@ -105,12 +137,6 @@
 		if (store.view !== 'files') fileToOpen = undefined
 	})
 
-	$effect(() => {
-		void store.git?.isRepo
-		void store.view
-		if (store.view === 'source' && !store.git?.isRepo) store.setView('content')
-	})
-
 	function onKey(e: KeyboardEvent) {
 		if (!(e.metaKey || e.ctrlKey)) return
 		if (e.key === ',') {
@@ -139,7 +165,7 @@
 			if (store.bound) store.setView('instance')
 		} else if (e.key === '4') {
 			e.preventDefault()
-			if (store.git?.isRepo) store.setView('source')
+			store.setView('source')
 		} else if (e.key === 'f' || e.key === 'F') {
 			e.preventDefault()
 			if (fileFind.open?.()) return
@@ -201,12 +227,28 @@
 			{/if}
 		</main>
 	{:else}
-		<WelcomeView onnew={() => (showNew = true)} onclone={() => (showClone = true)} />
+		<WelcomeView onnew={() => (showStart = true)} />
 	{/if}
 
-	{#if showNew}<NewPackModal onclose={() => (showNew = false)} />{/if}
+	{#if showIntro}<IntroModal onstart={() => (showStart = true)} />{/if}
+	{#if showStart}
+		<StartPackModal onclose={() => (showStart = false)} onpick={onStartPick} />
+	{/if}
+	{#if showPickForNew}
+		<InstancePicker onpick={onPickForNew} onclose={() => (showPickForNew = false)} />
+	{/if}
+	{#if showNew}
+		<NewPackModal
+			initialInstance={newInstance}
+			onclose={() => {
+				showNew = false
+				newInstance = null
+			}}
+		/>
+	{/if}
 	{#if showClone}<CloneModal onclose={() => (showClone = false)} />{/if}
 	{#if store.authPrompt}<AuthModal />{/if}
+	{#if store.deletePrompt}<DeleteConfirm />{/if}
 	{#if store.settingsOpen}<SettingsModal onclose={() => (store.settingsOpen = false)} />{/if}
 	{#if showExport}<ExportModal onclose={() => (showExport = false)} />{/if}
 	{#if showLink}
@@ -236,7 +278,7 @@
 				<span class="text-[0.8rem] text-secondary">
 					{store.hasPack
 						? 'Jars are matched to Modrinth / CurseForge automatically'
-						: '.mrpack or CurseForge .zip'}
+						: '.mrpack, CurseForge .zip, or Prism / MultiMC instance'}
 				</span>
 			</div>
 		</div>

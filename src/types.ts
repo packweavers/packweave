@@ -402,6 +402,7 @@ export interface DetectedInstance {
 	source: string | null
 	packName: string | null
 	packVersion: string | null
+	iconPath: string | null
 }
 
 export interface FsEntry {

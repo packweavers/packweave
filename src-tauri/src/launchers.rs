@@ -26,6 +26,7 @@ pub struct DetectedInstance {
     pub source: Option<String>,
     pub pack_name: Option<String>,
     pub pack_version: Option<String>,
+    pub icon_path: Option<String>,
 }
 
 #[derive(Default)]
@@ -63,6 +64,18 @@ fn bases(home: &Path) -> Vec<(&'static str, PathBuf)> {
         v.push((
             "Modrinth App",
             home.join(".config/com.modrinth.theseus/profiles"),
+        ));
+        // Flatpak
+        let flatpak = home.join(".var/app");
+        v.push((
+            "Prism Launcher",
+            flatpak.join(
+                "org.prismlauncher.PrismLauncher/data/PrismLauncher/instances",
+            ),
+        ));
+        v.push((
+            "Modrinth App",
+            flatpak.join("com.modrinth.ModrinthApp/data/ModrinthApp/profiles"),
         ));
     }
     #[cfg(target_os = "windows")]
@@ -122,6 +135,7 @@ pub fn detect() -> Vec<DetectedInstance> {
                     source: link.source,
                     pack_name: link.pack_name,
                     pack_version: link.pack_version,
+                    icon_path: find_instance_icon(&inst, Some(&base)),
                 });
             }
         }
@@ -143,6 +157,7 @@ pub fn detect() -> Vec<DetectedInstance> {
                 source: None,
                 pack_name: None,
                 pack_version: None,
+                icon_path: None,
             });
         }
     }
@@ -155,6 +170,97 @@ pub fn detect() -> Vec<DetectedInstance> {
             .then_with(|| a.name.cmp(&b.name))
     });
     out
+}
+
+/// Turn a hand-picked folder into a linkable instance. Understands a
+/// Prism / MultiMC instance root (instance.cfg + mmc-pack.json alongside a
+/// .minecraft/ game dir): the game dir is scanned for content, while the name,
+/// Minecraft/loader versions, and icon come from the config files outside it.
+pub fn resolve_folder(dir: &Path) -> DetectedInstance {
+    let folder = dir
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let game_dir = resolve_game_dir(dir)
+        .or_else(|| {
+            [".minecraft", "minecraft"]
+                .iter()
+                .map(|s| dir.join(s))
+                .find(|c| c.is_dir())
+        })
+        .unwrap_or_else(|| dir.to_path_buf());
+
+    let is_mmc = dir.join("instance.cfg").is_file()
+        || dir.join("mmc-pack.json").is_file();
+
+    let (name, minecraft, loader, loader_version, launcher, link) = if is_mmc {
+        let (name, mc, loader, lv) = read_meta(dir, &folder);
+        (name, mc, loader, lv, "Prism / MultiMC", read_mmc_link(dir))
+    } else if dir.join("launcher_profiles.json").is_file() {
+        let (name, mc, loader, lv) = read_vanilla(dir);
+        (
+            name,
+            mc,
+            loader,
+            lv,
+            "Minecraft Launcher",
+            LinkInfo::default(),
+        )
+    } else {
+        let (mc, loader, lv) = read_env(&game_dir);
+        (
+            folder.clone(),
+            mc,
+            loader,
+            lv,
+            "Folder",
+            LinkInfo::default(),
+        )
+    };
+
+    let icon_path = find_instance_icon(dir, None).or_else(|| {
+        let p = game_dir.join("icon.png");
+        p.is_file().then(|| p.to_string_lossy().to_string())
+    });
+
+    DetectedInstance {
+        launcher: launcher.into(),
+        name,
+        game_dir: game_dir.to_string_lossy().to_string(),
+        minecraft,
+        loader,
+        loader_version,
+        kind: link.kind.unwrap_or(InstanceKind::Local),
+        source: link.source,
+        pack_name: link.pack_name,
+        pack_version: link.pack_version,
+        icon_path,
+    }
+}
+
+fn find_instance_icon(inst_root: &Path, base: Option<&Path>) -> Option<String> {
+    let icon_key = std::fs::read_to_string(inst_root.join("instance.cfg"))
+        .ok()
+        .and_then(|cfg| {
+            cfg.lines().find_map(|l| {
+                l.strip_prefix("iconKey=").map(|v| v.trim().to_string())
+            })
+        })
+        .filter(|k| !k.is_empty());
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(k) = &icon_key {
+        candidates.push(inst_root.join(format!("{k}.png")));
+    }
+    candidates.push(inst_root.join("icon.png"));
+    if let (Some(base), Some(k)) = (base, &icon_key) {
+        if let Some(root) = base.parent() {
+            candidates.push(root.join("icons").join(format!("{k}.png")));
+        }
+    }
+    candidates
+        .into_iter()
+        .find(|p| p.is_file())
+        .map(|p| p.to_string_lossy().to_string())
 }
 
 fn resolve_game_dir(inst: &Path) -> Option<PathBuf> {
@@ -361,6 +467,11 @@ fn read_modrinth_rows(
             _ => None,
         };
         let link = modrinth_link(link_kind, imp_name, imp_ver);
+        let icon_path = ["icon.png", "icon.jpg"]
+            .iter()
+            .map(|f| game_dir.join(f))
+            .find(|p| p.is_file())
+            .map(|p| p.to_string_lossy().to_string());
         out.push(DetectedInstance {
             launcher: "Modrinth App".into(),
             name: name.filter(|n| !n.is_empty()).unwrap_or(path),
@@ -372,6 +483,7 @@ fn read_modrinth_rows(
             source: link.source,
             pack_name: link.pack_name,
             pack_version: link.pack_version,
+            icon_path,
         });
     }
     true

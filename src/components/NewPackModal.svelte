@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte'
 	import { Link2, X } from '@lucide/svelte'
 	import Modal from './ui/Modal.svelte'
 	import ButtonStyled from './ui/ButtonStyled.svelte'
@@ -9,7 +10,10 @@
 	import { LOADERS, type DetectedInstance } from '../types'
 	import { basename, loaderLabel } from '../util'
 
-	let { onclose }: { onclose?: () => void } = $props()
+	let {
+		onclose,
+		initialInstance = null,
+	}: { onclose?: () => void; initialInstance?: DetectedInstance | null } = $props()
 
 	let name = $state('My Modpack')
 	let minecraft = $state('')
@@ -23,6 +27,10 @@
 	let pendingLoaderVersion = $state<string | null>(null)
 
 	const looksSnapshot = (v: string) => /\d\dw\d\d|-pre|-rc|snapshot/i.test(v)
+
+	onMount(() => {
+		if (initialInstance) onPick(initialInstance)
+	})
 
 	function onPick(picked: DetectedInstance) {
 		instance = picked
@@ -90,6 +98,7 @@
 			loader,
 			loaderVersion.trim() || null,
 			instance?.gameDir ?? null,
+			instance?.iconPath ?? null,
 		)
 		if (!ok) return
 		onclose?.()

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Boxes, FolderOpen, Clock, X, Import, GitBranch } from '@lucide/svelte'
+	import { Boxes, FolderOpen, Clock, X, Plus } from '@lucide/svelte'
 	import ButtonStyled from './ui/ButtonStyled.svelte'
 	import WindowControls from './WindowControls.svelte'
 	import { store } from '../lib/store.svelte'
@@ -7,7 +7,7 @@
 	import { tooltip } from '../lib/tooltip'
 	import { fromNowMs, isMac, loaderLabel } from '../util'
 
-	let { onnew, onclone }: { onnew?: () => void; onclone?: () => void } = $props()
+	let { onnew }: { onnew?: () => void } = $props()
 
 	const recents = $derived(store.recents)
 </script>
@@ -27,25 +27,13 @@
 	>
 		<div class="w-[46px] h-[46px] rounded-[11px] bg-brand rotate-45 mt-2 mb-[1.6rem]"></div>
 		<h1 class="text-[1.7rem]">packweave</h1>
-		<div class="flex flex-wrap justify-center gap-[0.6rem] mb-[2.4rem]">
+		<p class="text-secondary text-[0.9rem] mt-[0.3rem] mb-[2rem]">
+			A Minecraft modpack IDE.
+		</p>
+		<div class="mb-[2.4rem]">
 			<ButtonStyled color="brand" size="large" disabled={store.busy} onclick={() => onnew?.()}>
-				New
+				<Plus size={16} /> Get Started
 			</ButtonStyled>
-			<span class="inline-flex" use:tooltip={'Open folder'}>
-				<ButtonStyled size="large" disabled={store.busy} onclick={() => store.openPack()}>
-					<FolderOpen size={15} />
-				</ButtonStyled>
-			</span>
-			<span class="inline-flex" use:tooltip={'Import pack'}>
-				<ButtonStyled size="large" disabled={store.busy} onclick={() => store.importPack()}>
-					<Import size={15} />
-				</ButtonStyled>
-			</span>
-			<span class="inline-flex" use:tooltip={'Clone from Git'}>
-				<ButtonStyled size="large" disabled={store.busy} onclick={() => onclone?.()}>
-					<GitBranch size={15} />
-				</ButtonStyled>
-			</span>
 		</div>
 
 		{#if recents.length}

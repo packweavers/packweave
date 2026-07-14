@@ -110,6 +110,13 @@ pub async fn detect_instances() -> Result<Vec<DetectedInstance>, String> {
 }
 
 #[tauri::command]
+pub async fn resolve_instance_folder(
+    path: String,
+) -> Result<DetectedInstance, String> {
+    Ok(launchers::resolve_folder(&PathBuf::from(path)))
+}
+
+#[tauri::command]
 pub async fn pack_icon(path: String) -> Result<Option<String>, String> {
     use base64::Engine;
     let p = instance::overrides_dir(&PathBuf::from(path)).join("icon.png");

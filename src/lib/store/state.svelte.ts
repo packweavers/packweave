@@ -66,6 +66,7 @@ export const s = $state({
 	providers: [] as ProviderInfo[],
 	settingsOpen: false,
 	authPrompt: null as { provider: GitProvider } | null,
+	deletePrompt: null as { ids: string[] } | null,
 	prefs: {} as Record<string, unknown>,
 
 	get hasPack(): boolean {

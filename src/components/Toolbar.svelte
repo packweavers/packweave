@@ -13,7 +13,8 @@
 		Link2,
 		Unlink,
 		Settings,
-		CircleCheck,
+		BookOpen,
+		EyeOff,
 		X,
 	} from '@lucide/svelte'
 	import Dropdown from './ui/Dropdown.svelte'
@@ -22,8 +23,15 @@
 	import ButtonStyled from './ui/ButtonStyled.svelte'
 	import { tooltip } from '../lib/tooltip'
 	import { store } from '../lib/store.svelte'
+	import { openGuides } from '../api'
 	import type { Validation } from '../types'
 	import { isMac, loaderLabel } from '../util'
+	import {
+		visibleProblems,
+		hiddenProblems,
+		suppress,
+		restoreAll,
+	} from '../lib/problems'
 
 	let {
 		onadd,
@@ -41,31 +49,27 @@
 	)
 	const busy = $derived(store.busy)
 
+	const problems = $derived(visibleProblems())
+	const hidden = $derived(hiddenProblems())
+	const errorCount = $derived(problems.filter((p) => p.severity === 'error').length)
+	const warnCount = $derived(problems.filter((p) => p.severity === 'warning').length)
+
 	const health = $derived.by(() => {
-		const h = store.health
-		if (!h) return { kind: 'muted', label: '-' }
-		if (h.errors > 0)
-			return { kind: 'error', label: `${h.errors} ${h.errors === 1 ? 'problem' : 'problems'}` }
-		if (h.warnings > 0)
-			return { kind: 'warn', label: `${h.warnings} ${h.warnings === 1 ? 'warning' : 'warnings'}` }
-		return { kind: 'ok', label: 'Healthy' }
+		if (errorCount > 0)
+			return {
+				kind: 'error',
+				label: `${errorCount} ${errorCount === 1 ? 'problem' : 'problems'}`,
+			}
+		return { kind: 'warn', label: `${warnCount} ${warnCount === 1 ? 'warning' : 'warnings'}` }
 	})
 
-	const problems = $derived(
-		store.validations.filter((v) => v.severity === 'error' || v.severity === 'warning'),
-	)
-
 	const healthCls: Record<string, string> = {
-		ok: 'text-secondary',
 		warn: 'text-orange',
 		error: 'text-red',
-		muted: 'text-secondary',
 	}
 	const dotCls: Record<string, string> = {
-		ok: 'bg-green',
 		warn: 'bg-orange',
 		error: 'bg-red',
-		muted: 'bg-secondary',
 	}
 
 	function goToProblem(_p: Validation) {
@@ -183,6 +187,15 @@
 				>
 					<Settings size={15} /><span>Settings…</span>
 				</button>
+				<button
+					class="flex items-center gap-[0.55rem] bg-transparent border-0 text-body text-[0.85rem] text-left px-[0.6rem] py-[0.45rem] rounded-sm cursor-pointer w-full hover:bg-button-bg hover:text-contrast"
+					onclick={() => {
+						hide()
+						openGuides()
+					}}
+				>
+					<BookOpen size={15} /><span>Guides</span>
+				</button>
 				<div class="h-px bg-divider my-1"></div>
 				<button
 					class="flex items-center gap-[0.55rem] bg-transparent border-0 text-body text-[0.85rem] text-left px-[0.6rem] py-[0.45rem] rounded-sm cursor-pointer w-full hover:bg-button-bg hover:text-red"
@@ -231,23 +244,21 @@
 				>
 			{/if}
 		</button>
-		{#if store.git?.isRepo}
-			<button
-				class="inline-flex items-center gap-[0.35rem] bg-transparent border-0 text-[0.82rem] px-[0.7rem] py-[0.4rem] rounded-md cursor-pointer whitespace-nowrap hover:bg-button-bg hover:text-contrast {store.view ===
-				'source'
-					? 'bg-button-bg text-contrast font-semibold'
-					: 'text-secondary font-medium'}"
-				onclick={() => store.setView('source')}
-			>
-				<GitBranch size={15} /> Source
-				{#if gitCount}
-					<span
-						class="bg-brand text-on-brand rounded-max text-[0.62rem] font-semibold px-[0.4rem] py-[0.05rem] min-w-[1.1rem] text-center"
-						>{gitCount}</span
-					>
-				{/if}
-			</button>
-		{/if}
+		<button
+			class="inline-flex items-center gap-[0.35rem] bg-transparent border-0 text-[0.82rem] px-[0.7rem] py-[0.4rem] rounded-md cursor-pointer whitespace-nowrap hover:bg-button-bg hover:text-contrast {store.view ===
+			'source'
+				? 'bg-button-bg text-contrast font-semibold'
+				: 'text-secondary font-medium'}"
+			onclick={() => store.setView('source')}
+		>
+			<GitBranch size={15} /> Source
+			{#if gitCount}
+				<span
+					class="bg-brand text-on-brand rounded-max text-[0.62rem] font-semibold px-[0.4rem] py-[0.05rem] min-w-[1.1rem] text-center"
+					>{gitCount}</span
+				>
+			{/if}
+		</button>
 	</nav>
 
 	<Dropdown placement="bottom-start">
@@ -269,24 +280,20 @@
 
 	<div class="flex-1 self-stretch min-w-[0.5rem]" data-tauri-drag-region></div>
 
-	<Dropdown placement="bottom-end">
-		{#snippet trigger()}
-			<button
-				class="inline-flex items-center gap-[0.4rem] text-[0.76rem] font-medium px-[0.6rem] py-[0.35rem] border-0 rounded-max bg-button-bg whitespace-nowrap cursor-pointer hover:bg-button-bg-hover {healthCls[
-					health.kind
-				]}"
-				use:tooltip={'Pack health'}
-			>
-				<span class="w-[7px] h-[7px] rounded-full {dotCls[health.kind]}"></span>{health.label}
-			</button>
-		{/snippet}
-		{#snippet content(_hide)}
-			<div class="w-[320px] flex flex-col gap-px">
-				{#if !problems.length}
-					<div class="flex items-center gap-[0.4rem] text-green text-[0.82rem] px-[0.5rem] py-[0.4rem]">
-						<CircleCheck size={15} /> No problems
-					</div>
-				{:else}
+	{#if problems.length}
+		<Dropdown placement="bottom-end">
+			{#snippet trigger()}
+				<button
+					class="inline-flex items-center gap-[0.4rem] text-[0.76rem] font-medium px-[0.6rem] py-[0.35rem] border-0 rounded-max bg-button-bg whitespace-nowrap cursor-pointer hover:bg-button-bg-hover {healthCls[
+						health.kind
+					]}"
+					use:tooltip={'Problems'}
+				>
+					<span class="w-[7px] h-[7px] rounded-full {dotCls[health.kind]}"></span>{health.label}
+				</button>
+			{/snippet}
+			{#snippet content(_hide)}
+				<div class="w-[320px] flex flex-col gap-px">
 					<div
 						class="text-[0.66rem] uppercase tracking-[0.05em] text-secondary font-[650] pt-[0.3rem] px-[0.5rem] pb-[0.35rem]"
 					>
@@ -294,7 +301,7 @@
 					</div>
 					{#each problems as p (p.id)}
 						<div
-							class="flex items-start gap-2 px-[0.5rem] py-[0.4rem] rounded-sm border-l-2 hover:bg-button-bg {p.severity ===
+							class="group flex items-start gap-2 px-[0.5rem] py-[0.4rem] rounded-sm border-l-2 hover:bg-button-bg {p.severity ===
 							'error'
 								? 'border-l-red'
 								: 'border-l-orange'}"
@@ -315,12 +322,28 @@
 									{p.fix.label}
 								</ButtonStyled>
 							{/if}
+							<button
+								class="shrink-0 text-secondary bg-transparent border-0 cursor-pointer p-[0.15rem] rounded-sm opacity-0 group-hover:opacity-100 hover:bg-button-bg hover:text-contrast"
+								use:tooltip={'Hide this problem'}
+								aria-label="Hide this problem"
+								onclick={() => suppress(p)}
+							>
+								<EyeOff size={13} />
+							</button>
 						</div>
 					{/each}
-				{/if}
-			</div>
-		{/snippet}
-	</Dropdown>
+					{#if hidden.length}
+						<button
+							class="text-left text-[0.72rem] text-secondary bg-transparent border-0 cursor-pointer px-[0.5rem] py-[0.4rem] mt-[0.2rem] border-t border-divider hover:text-contrast"
+							onclick={() => restoreAll()}
+						>
+							Show {hidden.length} hidden
+						</button>
+					{/if}
+				</div>
+			{/snippet}
+		</Dropdown>
+	{/if}
 	<ButtonStyled size="small" disabled={store.busy || !store.hasLock} onclick={() => onexport?.()}>
 		<Package size={15} /> Export
 	</ButtonStyled>
