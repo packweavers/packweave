@@ -5,19 +5,23 @@ import { refreshGit } from './git'
 import { autoSyncAfterEdit } from './instance'
 
 export function applyResolved(r: PackResolved) {
+	const prev = s.lockfile
 	if (s.pack) s.pack.manifest = r.manifest
 	s.lockfile = r.lockfile
 	s.validations = r.validations
 	s.health = r.health
 	void enrichAll()
 	void refreshUnpublished()
-	if (s.instanceDir) void autoSyncAfterEdit()
+	const fromLoad = s.suppressAutoPush
+	s.suppressAutoPush = false
+	if (s.instanceDir) void autoSyncAfterEdit(prev, r.lockfile, fromLoad)
 }
 
 export function showState(lockfile: Lockfile | null) {
 	s.lockfile = lockfile
 	s.validations = []
 	s.health = null
+	s.suppressAutoPush = true
 	void enrichAll()
 	void refreshUnpublished()
 }

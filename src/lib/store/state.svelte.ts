@@ -50,6 +50,7 @@ export const s = $state({
 	scanning: false,
 	syncPending: false,
 	scanBusy: false,
+	suppressAutoPush: false,
 	git: null as GitStatus | null,
 	updateInfo: null as { version: string; notes: string } | null,
 	recents: [] as RecentPack[],

@@ -79,7 +79,6 @@ export async function createPack(
 			try {
 				await api.setPackIcon(dir, iconPath)
 			} catch {
-				/* icon is best-effort */
 			}
 		}
 		clearEnrich()

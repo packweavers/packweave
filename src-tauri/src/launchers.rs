@@ -65,7 +65,6 @@ fn bases(home: &Path) -> Vec<(&'static str, PathBuf)> {
             "Modrinth App",
             home.join(".config/com.modrinth.theseus/profiles"),
         ));
-        // Flatpak
         let flatpak = home.join(".var/app");
         v.push((
             "Prism Launcher",
@@ -172,10 +171,6 @@ pub fn detect() -> Vec<DetectedInstance> {
     out
 }
 
-/// Turn a hand-picked folder into a linkable instance. Understands a
-/// Prism / MultiMC instance root (instance.cfg + mmc-pack.json alongside a
-/// .minecraft/ game dir): the game dir is scanned for content, while the name,
-/// Minecraft/loader versions, and icon come from the config files outside it.
 pub fn resolve_folder(dir: &Path) -> DetectedInstance {
     let folder = dir
         .file_name()

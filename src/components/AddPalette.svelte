@@ -89,8 +89,6 @@
 	async function addUrl() {
 		const u = urlValue.trim()
 		if (!u || !store.pack) return
-		// A pasted Modrinth/CurseForge project link should become a real tracked
-		// mod, not a raw file — resolve it through the matching provider.
 		const host = projectHost(u)
 		if (host) {
 			urlBusy = true

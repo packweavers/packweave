@@ -1,7 +1,35 @@
 import { api, pickFolder } from '../../api'
-import type { SyncOp } from '../../types'
+import type { Lockfile, LockedMod, SyncOp } from '../../types'
+import { activeSource } from '../../types'
 import { s, notify } from './state.svelte'
 import { applyResolved } from './resolve'
+
+function packSig(m: LockedMod): string {
+	const src = activeSource(m)
+	return [
+		m.disabled ? 'off' : 'on',
+		m.preferred,
+		src?.versionId ?? '',
+		src?.filename ?? '',
+		src?.downloadUrl ?? '',
+	].join('|')
+}
+
+function packDeltas(
+	prev: Lockfile | null,
+	next: Lockfile,
+): { ids: Set<string>; files: Set<string> } {
+	const before = new Map((prev?.mods ?? []).map((m) => [m.projectId, packSig(m)]))
+	const ids = new Set<string>()
+	const files = new Set<string>()
+	for (const m of next.mods) {
+		if (before.get(m.projectId) === packSig(m)) continue
+		ids.add(m.projectId)
+		const f = activeSource(m)?.filename
+		if (f) files.add(f)
+	}
+	return { ids, files }
+}
 
 export async function loadBinding() {
 	if (!s.pack) return
@@ -14,11 +42,15 @@ export async function loadBinding() {
 	if (s.instanceDir) void refreshSync()
 }
 
-export async function autoPushPackChanges() {
+export async function autoPushPackChanges(delta: { ids: Set<string>; files: Set<string> }) {
 	if (!s.pack || !s.instanceDir || !s.sync) return
 	const ops: SyncOp[] = []
 	for (const m of s.sync.mods) {
-		if (m.kind === 'pack_only' || m.kind === 'version_diff' || m.kind === 'local_only') {
+		const pushable = m.kind === 'pack_only' || m.kind === 'version_diff' || m.kind === 'local_only'
+		const isPackChange =
+			(m.projectId != null && delta.ids.has(m.projectId)) ||
+			(m.filename != null && delta.files.has(m.filename))
+		if (pushable && isPackChange) {
 			ops.push({
 				target: 'mod',
 				kind: m.kind,
@@ -42,10 +74,11 @@ export async function autoPushPackChanges() {
 	} catch {}
 }
 
-export async function autoSyncAfterEdit() {
+export async function autoSyncAfterEdit(prev: Lockfile | null, next: Lockfile, fromLoad: boolean) {
 	if (!s.pack || !s.instanceDir) return
 	await refreshSync(true)
-	if (s.autoPushOnSave) await autoPushPackChanges()
+	if (fromLoad || !s.autoPushOnSave) return
+	await autoPushPackChanges(packDeltas(prev, next))
 }
 
 export async function linkInstance(instance: string) {

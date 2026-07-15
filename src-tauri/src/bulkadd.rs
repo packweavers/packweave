@@ -69,10 +69,6 @@ fn is_slug(s: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-// Pulls a project slug (and a type hint) out of a Modrinth or CurseForge URL,
-// regardless of which host it points at. The list is resolved against a single
-// provider chosen by the caller, so the host in the link only matters for
-// recognizing the slug — never for which API we talk to.
 fn parse_url(token: &str) -> Option<(String, ProjectType)> {
     let lower = token.to_lowercase();
     if let Some(idx) = lower.find("modrinth.com/") {
