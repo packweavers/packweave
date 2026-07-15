@@ -78,8 +78,7 @@ export async function createPack(
 		if (iconPath) {
 			try {
 				await api.setPackIcon(dir, iconPath)
-			} catch {
-			}
+			} catch {}
 		}
 		clearEnrich()
 		resetView()
