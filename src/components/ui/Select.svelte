@@ -8,12 +8,16 @@
 		placeholder = 'Select…',
 		searchable = true,
 		display = (o: string) => o,
+		valueLabel = '',
+		disabled = false,
 	}: {
 		value?: string
 		options?: readonly string[]
 		placeholder?: string
 		searchable?: boolean
 		display?: (o: string) => string
+		valueLabel?: string
+		disabled?: boolean
 	} = $props()
 
 	let open = $state(false)
@@ -114,12 +118,17 @@
 <button
 	bind:this={triggerEl}
 	type="button"
+	{disabled}
 	onclick={() => (open ? close() : openMenu())}
-	class={`flex items-center justify-between gap-2 w-full bg-bg border text-contrast rounded-md px-[0.7rem] py-[0.55rem] text-sm outline-none cursor-pointer ${
-		open ? 'border-brand' : 'border-divider hover:border-divider-dark'
+	class={`flex items-center justify-between gap-2 w-full bg-bg border text-contrast rounded-md px-[0.7rem] py-[0.55rem] text-sm outline-none ${
+		disabled
+			? 'border-divider opacity-50 cursor-not-allowed'
+			: `cursor-pointer ${open ? 'border-brand' : 'border-divider hover:border-divider-dark'}`
 	}`}
 >
-	<span class={`truncate ${value ? '' : 'text-secondary'}`}>{value ? display(value) : placeholder}</span>
+	<span class={`truncate ${value ? '' : 'text-secondary'}`}
+		>{value ? (!open && valueLabel ? valueLabel : display(value)) : placeholder}</span
+	>
 	<ChevronDown size={15} class="text-secondary shrink-0" />
 </button>
 

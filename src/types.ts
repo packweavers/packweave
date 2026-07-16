@@ -26,6 +26,12 @@ export interface Manifest {
 	channel: string
 }
 
+export interface LoaderVersions {
+	versions: string[]
+	recommended: string | null
+	kind: string
+}
+
 export interface SourceFile {
 	id?: string | null
 	url?: string | null

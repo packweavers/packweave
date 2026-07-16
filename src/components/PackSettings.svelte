@@ -70,21 +70,35 @@
 		}
 	})
 
+	let loaderKind = $state('')
+	let loaderRecommended = $state('')
 	let lvReq = 0
 	$effect(() => {
 		const l = loader
 		const mc = minecraft
-		const snap = snapshots
 		const req = ++lvReq
 		api
-			.getLoaderVersions(l, mc, snap)
-			.then((vs) => {
-				if (req === lvReq) loaderVersions = vs
+			.getLoaderVersions(l, mc)
+			.then((res) => {
+				if (req !== lvReq) return
+				loaderVersions = res.versions
+				loaderKind = res.kind
+				loaderRecommended = res.recommended ?? ''
+				if (!res.versions.includes(loaderVersion)) {
+					loaderVersion = res.recommended ?? res.versions[0] ?? ''
+				}
 			})
 			.catch(() => {
-				if (req === lvReq) loaderVersions = []
+				if (req !== lvReq) return
+				loaderVersions = []
+				loaderKind = ''
+				loaderRecommended = ''
 			})
 	})
+
+	const loaderValueLabel = $derived(
+		loaderVersion && loaderVersion === loaderRecommended ? loaderKind : '',
+	)
 
 	async function apply() {
 		await store.setPackVersion(version.trim())
@@ -154,7 +168,13 @@
 	{#if loader !== 'vanilla'}
 		<div class="flex flex-col gap-[0.3rem] mb-[0.6rem]">
 			<span class="text-[0.72rem] text-secondary font-[550]">Loader version</span>
-			<Select bind:value={loaderVersion} options={loaderVersions} placeholder="latest" />
+			<Select
+				bind:value={loaderVersion}
+				options={loaderVersions}
+				valueLabel={loaderValueLabel}
+				disabled={loaderVersions.length === 0}
+				placeholder={loaderVersions.length ? 'latest' : 'No builds for this Minecraft version'}
+			/>
 		</div>
 	{/if}
 
@@ -173,7 +193,9 @@
 		<ButtonStyled
 			size="small"
 			color="brand"
-			disabled={store.busy || !minecraft.trim()}
+			disabled={store.busy ||
+				!minecraft.trim() ||
+				(loader !== 'vanilla' && loaderVersions.length === 0)}
 			onclick={apply}
 		>
 			Apply

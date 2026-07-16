@@ -61,35 +61,46 @@
 			.catch(() => {})
 	})
 
+	let loaderKind = $state('')
+	let loaderRecommended = $state('')
 	let lvReq = 0
 	$effect(() => {
 		const l = loader
 		const mc = minecraft
-		const snap = snapshots
 		if (l === 'vanilla') {
 			loaderVersions = []
 			loaderVersion = ''
+			loaderKind = ''
+			loaderRecommended = ''
 			return
 		}
 		const req = ++lvReq
 		api
-			.getLoaderVersions(l, mc, snap)
-			.then((list) => {
+			.getLoaderVersions(l, mc)
+			.then((res) => {
 				if (req !== lvReq) return
-				loaderVersions = list
+				loaderVersions = res.versions
+				loaderKind = res.kind
+				loaderRecommended = res.recommended ?? ''
 				if (pendingLoaderVersion) {
 					loaderVersion = pendingLoaderVersion
 					pendingLoaderVersion = null
-				} else if (!list.includes(loaderVersion)) {
-					loaderVersion = list[0] ?? ''
+				} else if (!res.versions.includes(loaderVersion)) {
+					loaderVersion = res.recommended ?? res.versions[0] ?? ''
 				}
 			})
 			.catch(() => {
 				if (req !== lvReq) return
 				loaderVersions = []
 				loaderVersion = ''
+				loaderKind = ''
+				loaderRecommended = ''
 			})
 	})
+
+	const loaderValueLabel = $derived(
+		loaderVersion && loaderVersion === loaderRecommended ? loaderKind : '',
+	)
 
 	async function create() {
 		const ok = await store.createPack(
@@ -138,7 +149,13 @@
 	{#if loader !== 'vanilla'}
 		<div class="flex flex-col gap-[0.35rem] mb-[0.85rem]">
 			<span class="text-[0.78rem] text-secondary font-[550]">Loader version</span>
-			<Select bind:value={loaderVersion} options={loaderVersions} placeholder="latest" />
+			<Select
+				bind:value={loaderVersion}
+				options={loaderVersions}
+				valueLabel={loaderValueLabel}
+				disabled={loaderVersions.length === 0}
+				placeholder={loaderVersions.length ? 'latest' : 'Not available for this Minecraft version'}
+			/>
 		</div>
 	{/if}
 
@@ -178,7 +195,10 @@
 		</ButtonStyled>
 		<ButtonStyled
 			color="brand"
-			disabled={store.busy || !name.trim() || !minecraft.trim()}
+			disabled={store.busy ||
+				!name.trim() ||
+				!minecraft.trim() ||
+				(loader !== 'vanilla' && loaderVersions.length === 0)}
 			onclick={create}
 		>
 			Choose folder & create

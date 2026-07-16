@@ -55,10 +55,10 @@ pub(crate) async fn resolve_loader_version(
     match manifest.loader_version.as_deref() {
         Some(v) if !v.is_empty() => Some(v.to_string()),
         _ if manifest.loader != "vanilla" => mr
-            .loader_versions(&manifest.loader, &manifest.minecraft, false)
+            .loader_versions(&manifest.loader, &manifest.minecraft)
             .await
             .ok()
-            .and_then(|v| v.into_iter().next()),
+            .and_then(|v| v.recommended),
         _ => None,
     }
 }

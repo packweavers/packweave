@@ -194,12 +194,16 @@ struct LoaderGameVersion {
 #[derive(Debug, Deserialize)]
 struct LoaderEntry {
     id: String,
-    #[serde(default = "stable_default")]
+    #[serde(default)]
     stable: bool,
 }
 
-fn stable_default() -> bool {
-    true
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoaderVersions {
+    pub versions: Vec<String>,
+    pub recommended: Option<String>,
+    pub kind: String,
 }
 
 impl Modrinth {
@@ -544,14 +548,13 @@ impl Modrinth {
         &self,
         loader: &str,
         minecraft: &str,
-        include_unstable: bool,
-    ) -> Result<Vec<String>> {
+    ) -> Result<LoaderVersions> {
         let path = match loader {
             "fabric" => "fabric",
             "quilt" => "quilt",
             "forge" => "forge",
             "neoforge" => "neo",
-            _ => return Ok(vec![]),
+            _ => return Ok(LoaderVersions::default()),
         };
         let cache_key = format!("{loader}|{minecraft}");
         let versions: Vec<(String, bool)> = match self
@@ -574,12 +577,6 @@ impl Modrinth {
                             .game_versions
                             .iter()
                             .find(|g| g.id == "${modrinth.gameVersion}")
-                    })
-                    .or_else(|| {
-                        manifest
-                            .game_versions
-                            .iter()
-                            .find(|g| !g.loaders.is_empty())
                     });
                 let versions: Vec<(String, bool)> = entry
                     .map(|e| {
@@ -593,11 +590,19 @@ impl Modrinth {
                 versions
             }
         };
-        Ok(versions
-            .into_iter()
-            .filter(|(_, stable)| include_unstable || *stable)
-            .map(|(id, _)| id)
-            .collect())
+        let stable = versions.iter().find(|(_, s)| *s).map(|(id, _)| id);
+        let (recommended, kind) = match stable {
+            Some(id) => (Some(id.clone()), "stable"),
+            None => (
+                versions.first().map(|(id, _)| id.clone()),
+                if versions.is_empty() { "" } else { "latest" },
+            ),
+        };
+        Ok(LoaderVersions {
+            versions: versions.into_iter().map(|(id, _)| id).collect(),
+            recommended,
+            kind: kind.into(),
+        })
     }
 
     pub async fn versions_from_hashes(

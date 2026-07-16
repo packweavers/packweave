@@ -6,7 +6,9 @@ use tauri::State;
 use crate::content;
 use crate::curseforge::CurseForge;
 use crate::manifest::{self, Manifest};
-use crate::modrinth::{ModMeta, Modrinth, SearchHit, VersionInfo};
+use crate::modrinth::{
+    LoaderVersions, ModMeta, Modrinth, SearchHit, VersionInfo,
+};
 use crate::providers;
 use crate::providers::ProviderId;
 use crate::ptype::ProjectType;
@@ -311,12 +313,8 @@ pub async fn get_loader_versions(
     state: State<'_, Modrinth>,
     loader: String,
     minecraft: String,
-    include_snapshots: bool,
-) -> Result<Vec<String>, String> {
-    state
-        .loader_versions(&loader, &minecraft, include_snapshots)
-        .await
-        .map_err(es)
+) -> Result<LoaderVersions, String> {
+    state.loader_versions(&loader, &minecraft).await.map_err(es)
 }
 
 #[tauri::command]

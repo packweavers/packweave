@@ -16,6 +16,7 @@ import type {
 	GitChange,
 	GitCommit,
 	GitStatus,
+	LoaderVersions,
 	LocalContent,
 	Remote,
 	Stash,
@@ -254,12 +255,8 @@ export const api = {
 		return invoke('download_mods', { path, output })
 	},
 
-	getLoaderVersions(
-		loader: string,
-		minecraft: string,
-		includeSnapshots = false,
-	): Promise<string[]> {
-		return invoke('get_loader_versions', { loader, minecraft, includeSnapshots })
+	getLoaderVersions(loader: string, minecraft: string): Promise<LoaderVersions> {
+		return invoke('get_loader_versions', { loader, minecraft })
 	},
 
 	getMinecraftVersions(includeSnapshots = false): Promise<string[]> {
