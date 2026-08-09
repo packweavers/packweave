@@ -1,0 +1,58 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "packweave",
+  "version": "1.0.0",
+  "identifier": "com.packweave",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm build",
+    "beforeBundleCommand": "node src-tauri/scripts/build-appicon.mjs"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "packweave",
+        "width": 1320,
+        "height": 860,
+        "minWidth": 980,
+        "minHeight": 640,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/64x64.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico",
+      "icons/icon.png"
+    ],
+    "createUpdaterArtifacts": true,
+    "macOS": {
+      "files": {
+        "Resources/Assets.car": "target/appicon/Assets.car"
+      },
+      "infoPlist": "target/appicon/Info.plist"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI3ODk0ODM1RTQ1Qzc1MjUKUldRbGRWemtOVWlKSjVmTEJERTFZN2c1L3lNeUtaQ2R4ZUZMUmJYVUp5MXVabmVaMFhPVHI1VW0K",
+      "endpoints": [
+        "https://update.packweave.com/latest.json"
+      ]
+    }
+  }
+}

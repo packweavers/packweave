@@ -1,0 +1,443 @@
+<script lang="ts">
+	import { Search, Plus, Check, ExternalLink, Link, ClipboardList, TriangleAlert } from '@lucide/svelte'
+	import Avatar from './ui/Avatar.svelte'
+	import ButtonStyled from './ui/ButtonStyled.svelte'
+	import { api, openModrinthPage, openCurseforgePage } from '../api'
+	import { store } from '../lib/store.svelte'
+	import { contextMenu } from '../lib/contextmenu.svelte'
+	import { tooltip } from '../lib/tooltip'
+	import type { BulkLookup, ProjectType, SearchHit } from '../types'
+	import { formatCount } from '../util'
+
+	let { onclose }: { onclose?: () => void } = $props()
+
+	const sources = $derived([
+		...store.enabledProviders.map((p) => ({ id: p.id, label: p.displayName })),
+		{ id: 'url', label: 'URL' },
+	])
+
+	const TABS: { type: ProjectType; label: string }[] = [
+		{ type: 'mod', label: 'Mods' },
+		{ type: 'resourcepack', label: 'Resource packs' },
+		{ type: 'shader', label: 'Shaders' },
+	]
+
+	let source = $state<string>('modrinth')
+	let query = $state('')
+	let projectType = $state<ProjectType>('mod')
+	let results = $state<SearchHit[]>([])
+	let loading = $state(false)
+	let error = $state<string | null>(null)
+	let urlValue = $state('')
+	let urlName = $state('')
+	let urlBusy = $state(false)
+	let reqId = 0
+
+	const sourceLabel = $derived(store.providerName(source))
+	const canOpen = $derived(source === 'modrinth' || source === 'curseforge')
+
+	function projectHost(u: string): 'modrinth' | 'curseforge' | null {
+		const l = u.toLowerCase()
+		if (l.includes('modrinth.com/')) return 'modrinth'
+		if (l.includes('curseforge.com/minecraft/')) return 'curseforge'
+		return null
+	}
+
+	async function runSearch() {
+		if (source === 'url') {
+			results = []
+			return
+		}
+		const id = ++reqId
+		loading = true
+		error = null
+		try {
+			const hits = await api.search(
+				source,
+				query,
+				store.minecraft,
+				store.loader,
+				projectType,
+				0,
+				40,
+			)
+			if (id === reqId) results = hits
+		} catch (e) {
+			if (id === reqId) {
+				error = `${e}`
+				results = []
+			}
+		} finally {
+			if (id === reqId) loading = false
+		}
+	}
+
+	function addHit(hit: SearchHit) {
+		store.addContent(source, {
+			projectId: hit.project_id,
+			slug: hit.slug,
+			name: hit.title,
+			projectType: hit.project_type,
+		})
+	}
+
+	function openHit(hit: SearchHit) {
+		if (source === 'curseforge') openCurseforgePage(hit.slug, hit.project_type)
+		else if (source === 'modrinth') openModrinthPage(hit.slug)
+	}
+
+	async function addUrl() {
+		const u = urlValue.trim()
+		if (!u || !store.pack) return
+		const host = projectHost(u)
+		if (host) {
+			urlBusy = true
+			try {
+				const res = await api.bulkLookup(store.pack.dir, host, u)
+				if (res.found.length) {
+					await store.bulkAdd(res.found)
+					urlValue = ''
+					urlName = ''
+					return
+				}
+				store.notify(
+					'error',
+					`Couldn't find that project on ${host === 'modrinth' ? 'Modrinth' : 'CurseForge'}.`,
+				)
+				return
+			} catch (e) {
+				store.notify('error', `${e}`)
+				return
+			} finally {
+				urlBusy = false
+			}
+		}
+		const guessed = u.split('/').pop()?.replace(/\.[^.]+$/, '') || 'file'
+		await store.addContent('url', {
+			projectId: '',
+			slug: '',
+			name: urlName.trim() || guessed,
+			projectType,
+			url: u,
+		})
+		urlValue = ''
+		urlName = ''
+	}
+
+	let debounce: ReturnType<typeof setTimeout> | undefined
+	$effect(() => {
+		query
+		projectType
+		source
+		store.minecraft
+		store.loader
+		clearTimeout(debounce)
+		debounce = setTimeout(runSearch, 260)
+		return () => clearTimeout(debounce)
+	})
+
+	let mode = $state<'search' | 'bulk'>('search')
+	let bulkProvider = $state('modrinth')
+	let bulkText = $state('')
+	let bulkResult = $state<BulkLookup | null>(null)
+	let bulkSelected = $state(new Set<string>())
+	let bulkBusy = $state(false)
+
+	const bulkProviderLabel = $derived(store.providerName(bulkProvider))
+
+	function openBulk() {
+		bulkProvider = source
+		bulkResult = null
+		mode = 'bulk'
+	}
+
+	async function bulkFind() {
+		if (!store.pack || !bulkText.trim()) return
+		bulkBusy = true
+		try {
+			bulkResult = await api.bulkLookup(store.pack.dir, bulkProvider, bulkText)
+			bulkSelected = new Set(bulkResult.found.map((c) => c.projectId))
+		} catch (e) {
+			store.notify('error', `${e}`)
+		} finally {
+			bulkBusy = false
+		}
+	}
+	function toggleBulkPick(id: string) {
+		if (bulkSelected.has(id)) bulkSelected.delete(id)
+		else bulkSelected.add(id)
+		bulkSelected = new Set(bulkSelected)
+	}
+	async function bulkAddSelected() {
+		const items = (bulkResult?.found ?? []).filter((c) => bulkSelected.has(c.projectId))
+		if (!items.length) return
+		await store.bulkAdd(items)
+		onclose?.()
+	}
+</script>
+
+<svelte:window onkeydown={(e) => e.key === 'Escape' && onclose?.()} />
+
+<div
+	class="fixed inset-0 z-[65] flex justify-center items-start pt-[10vh] bg-[rgba(6,8,12,0.4)] backdrop-blur-[2px]"
+	role="presentation"
+	onclick={(e) => {
+		if (e.target === e.currentTarget) onclose?.()
+	}}
+>
+	<div class="w-[660px] max-w-[calc(100vw-2rem)] max-h-[74vh] flex flex-col bg-bg-super-raised border border-divider rounded-lg shadow-floating overflow-hidden">
+		<div class="flex items-center gap-2.5 px-4 py-3.5 border-b border-divider text-secondary">
+			{#if mode === 'bulk'}
+				<ClipboardList size={18} />
+				<span class="flex-1 text-contrast text-large"
+					>Paste a list · add to {bulkProviderLabel}</span
+				>
+			{:else}
+				{#if source !== 'url'}
+					<Search size={18} />
+				{:else}
+					<Link size={18} />
+				{/if}
+				<!-- svelte-ignore a11y_autofocus -->
+				{#if source !== 'url'}
+					<input
+						bind:value={query}
+						class="flex-1 bg-transparent border-none text-contrast text-large outline-none"
+						placeholder={`Add to your pack through ${sourceLabel}…`}
+						autofocus
+						spellcheck="false"
+					/>
+				{:else}
+					<input
+						bind:value={urlValue}
+						class="flex-1 bg-transparent border-none text-contrast text-large outline-none"
+						placeholder="Paste a Modrinth/CurseForge link, or a direct .jar / .zip URL…"
+						autofocus
+						spellcheck="false"
+						onkeydown={(e) => e.key === 'Enter' && addUrl()}
+					/>
+				{/if}
+			{/if}
+			<kbd
+				class="text-micro bg-button-bg border border-divider rounded-sm px-sm py-2xs text-secondary"
+				>esc</kbd
+			>
+		</div>
+
+		<div class="flex items-center gap-sm px-3 py-2 border-b border-divider">
+			{#if mode === 'bulk'}
+				<button
+					class="inline-flex items-center gap-1 border-none bg-transparent text-secondary text-small px-lg py-sm rounded-max cursor-pointer hover:text-body hover:bg-button-bg"
+					onclick={() => (mode = 'search')}
+				>
+					← Search
+				</button>
+			{:else}
+				{#each sources as s (s.id)}
+					<button
+						class="border-none font-semibold text-small px-2.5 py-sm rounded-max cursor-pointer {source ===
+						s.id
+							? 'text-contrast bg-button-bg shadow-[inset_0_0_0_1px_var(--color-divider-dark)]'
+							: 'bg-transparent text-secondary hover:text-body hover:bg-button-bg'}"
+						onclick={() => (source = s.id)}
+					>
+						{s.label}
+					</button>
+				{/each}
+				<span class="w-px self-stretch my-2xs mx-sm bg-divider"></span>
+				{#each TABS as t (t.type)}
+					<button
+						class="border-none font-[550] text-small px-2.5 py-sm rounded-max cursor-pointer {projectType ===
+						t.type
+							? 'text-on-brand bg-brand'
+							: 'bg-transparent text-secondary hover:text-body hover:bg-button-bg'}"
+						onclick={() => (projectType = t.type)}
+					>
+						{t.label}
+					</button>
+				{/each}
+				{#if source !== 'url'}
+					<button
+						class="inline-flex items-center gap-1 border-none bg-transparent text-secondary text-tiny px-lg py-sm rounded-max cursor-pointer hover:text-body hover:bg-button-bg ml-2"
+						onclick={openBulk}
+					>
+						<ClipboardList size={13} /> Paste a list
+					</button>
+				{/if}
+			{/if}
+			<span class="ml-auto text-tiny text-secondary">{store.minecraft} · {store.loader}</span>
+		</div>
+
+		{#if mode === 'bulk'}
+			<div class="flex flex-col min-h-0 overflow-hidden">
+				<div class="p-3 flex flex-col gap-2">
+					<textarea
+						bind:value={bulkText}
+						rows="5"
+						placeholder="Paste any combination of mod links and slugs. Surrounding text is fine."
+						class="w-full bg-bg-inset border border-divider text-contrast rounded-md px-2.5 py-2 text-regular outline-none focus:border-brand resize-y font-mono leading-[1.5]"
+						spellcheck="false"
+					></textarea>
+					<div class="flex items-center gap-2.5">
+						<ButtonStyled
+							color="brand"
+							size="small"
+							disabled={!bulkText.trim() || bulkBusy}
+							onclick={bulkFind}
+						>
+							{bulkBusy ? 'Finding…' : 'Find'}
+						</ButtonStyled>
+						{#if bulkResult}
+							<span class="text-tiny text-secondary">
+								{bulkResult.found.length} found{bulkResult.failed.length
+									? ` · ${bulkResult.failed.length} unrecognized`
+									: ''}
+							</span>
+						{/if}
+					</div>
+				</div>
+				{#if bulkResult}
+					<div class="overflow-y-auto px-lg pb-2 flex-1 min-h-0">
+						{#each bulkResult.found as c (c.projectId)}
+							<label
+								class="flex items-center gap-2.5 px-lg py-md rounded-md cursor-pointer hover:bg-button-bg"
+							>
+								<input
+									type="checkbox"
+									class="w-4 h-4 accent-brand cursor-pointer shrink-0"
+									checked={bulkSelected.has(c.projectId)}
+									onchange={() => toggleBulkPick(c.projectId)}
+								/>
+								<Avatar src={c.iconUrl ?? null} alt={c.name} size={30} />
+								<div class="flex-1 min-w-0">
+									<div
+										class="text-regular text-contrast whitespace-nowrap overflow-hidden text-ellipsis"
+									>
+										{c.name}
+									</div>
+									<div class="text-tiny text-secondary">
+										{store.providerName(c.provider)} · {c.projectType}
+									</div>
+								</div>
+							</label>
+						{/each}
+						{#if bulkResult.failed.length}
+							<div class="mt-2 border-t border-divider pt-2">
+								{#each bulkResult.failed as f (f.raw)}
+									<div class="flex items-start gap-md px-lg py-sm text-tiny text-orange">
+										<TriangleAlert size={13} class="shrink-0 mt-2xs" />
+										<span class="min-w-0"
+											><span class="font-mono break-all">{f.raw}</span>: {f.reason}</span
+										>
+									</div>
+								{/each}
+							</div>
+						{/if}
+					</div>
+					<div
+						class="flex items-center justify-end gap-2 px-3 py-2.5 border-t border-divider"
+					>
+						<ButtonStyled
+							color="brand"
+							disabled={store.busy || bulkSelected.size === 0}
+							onclick={bulkAddSelected}
+						>
+							<Plus size={15} /> Add {bulkSelected.size}
+						</ButtonStyled>
+					</div>
+				{/if}
+			</div>
+		{:else if source === 'url'}
+			<div class="p-3.5 flex flex-col gap-2.5">
+				<input
+					bind:value={urlName}
+					class="bg-bg-inset border border-divider text-contrast rounded-md px-2.5 py-2 text-regular outline-none"
+					placeholder="Display name (optional)"
+					spellcheck="false"
+				/>
+				<div class="self-start">
+					<ButtonStyled
+						color="brand"
+						disabled={!urlValue.trim() || store.busy || urlBusy}
+						onclick={addUrl}
+					>
+						<Plus size={15} /> {urlBusy ? 'Adding…' : 'Add'}
+					</ButtonStyled>
+				</div>
+				<p class="m-0 text-tiny text-secondary leading-[1.5]">
+					Paste a Modrinth or CurseForge mod link and it'll be tracked. A direct link is bundled as
+					an override instead.
+				</p>
+			</div>
+		{:else}
+			<div class="overflow-y-auto p-md">
+				{#if error}
+					<div class="text-center text-red py-5xl px-4 text-regular">{error}</div>
+				{:else if loading && !results.length}
+					<div class="text-center text-secondary py-5xl px-4 text-regular">Searching…</div>
+				{:else if !results.length}
+					<div class="text-center text-secondary py-5xl px-4 text-regular">Nothing matches this version and loader.</div>
+				{/if}
+
+				{#each results as hit (hit.project_id)}
+					<button
+						class="flex gap-3 w-full text-left bg-transparent border-none px-2.5 py-2.5 rounded-md items-start cursor-pointer disabled:cursor-default {store.busy ||
+						store.presentIds.has(hit.project_id)
+							? ''
+							: 'hover:bg-button-bg'}"
+						disabled={store.busy || store.presentIds.has(hit.project_id)}
+						onclick={() => addHit(hit)}
+						use:contextMenu={() => [
+							{
+								label: store.presentIds.has(hit.project_id) ? 'Added' : 'Add',
+								icon: store.presentIds.has(hit.project_id) ? Check : Plus,
+								disabled: store.busy || store.presentIds.has(hit.project_id),
+								onSelect: () => addHit(hit),
+							},
+						]}
+					>
+						<Avatar src={hit.icon_url} alt={hit.title} size={38} />
+						<div class="flex-1 min-w-0">
+							<div class="flex items-baseline gap-2">
+								<span class="font-semibold text-contrast">{hit.title}</span>
+								<span class="text-tiny text-secondary">by {hit.author}</span>
+								{#if canOpen}
+									<span
+										class="text-secondary cursor-pointer hover:text-contrast"
+										role="button"
+										tabindex="0"
+										use:tooltip={`Open on ${sourceLabel}`}
+										onclick={(e) => {
+											e.stopPropagation()
+											openHit(hit)
+										}}
+										onkeydown={(e) => {
+											if (e.key === 'Enter') {
+												e.stopPropagation()
+												openHit(hit)
+											}
+										}}
+									>
+										<ExternalLink size={12} />
+									</span>
+								{/if}
+							</div>
+							<div class="text-body text-small mt-2xs mb-sm overflow-hidden [display:-webkit-box] [-webkit-line-clamp:2] [line-clamp:2] [-webkit-box-orient:vertical]">{hit.description}</div>
+							<div class="flex items-center gap-2 flex-wrap text-tiny text-secondary">
+								<span>↓ {formatCount(hit.downloads)}</span>
+								{#each hit.display_categories.slice(0, 3) as c (c)}
+									<span class="bg-button-bg px-md py-2xs rounded-sm capitalize">{c}</span>
+								{/each}
+							</div>
+						</div>
+						{#if store.presentIds.has(hit.project_id)}
+							<span class="inline-flex items-center gap-1 text-tiny text-green shrink-0 self-center"><Check size={14} />Added</span>
+						{:else}
+							<span class="grid place-items-center w-[1.9rem] h-[1.9rem] rounded-sm bg-brand text-on-brand shrink-0"><Plus size={15} /></span>
+						{/if}
+					</button>
+				{/each}
+			</div>
+		{/if}
+	</div>
+</div>

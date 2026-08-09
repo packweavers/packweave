@@ -1,0 +1,11 @@
+{
+	"schemaVersion": 1,
+	"id": "packweaver",
+	"version": "1.0.0",
+	"name": "packweaver",
+	"description": "Keeps this instance in sync with its pack.",
+	"environment": "*",
+	"entrypoints": {
+		"preLaunch": ["packweaver.PackweaverFabric"]
+	}
+}
