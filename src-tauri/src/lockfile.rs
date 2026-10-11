@@ -89,6 +89,11 @@ pub struct LockedMod {
 }
 
 impl LockedMod {
+    pub fn unsupported_on(&self, env: &str) -> bool {
+        (env == "server" && self.server_side == "unsupported")
+            || (env == "client" && self.client_side == "unsupported")
+    }
+
     pub fn active(&self) -> Option<&SourceFile> {
         self.sources.get(&self.preferred)
     }

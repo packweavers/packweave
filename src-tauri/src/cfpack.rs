@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Map, Value};
 use std::collections::HashSet;
 use std::io::Write;
@@ -12,12 +12,34 @@ use crate::manifest::Manifest;
 use crate::packignore::PackFile;
 use crate::providers::ProviderId;
 use crate::ptype::{Folders, ProjectType};
+use crate::publish::Bundling;
 
 struct CfEntry {
     project_id: u64,
     file_id: u64,
     name: String,
     is_mod: bool,
+}
+
+struct Bundled {
+    name: String,
+    rel: String,
+    bytes: Vec<u8>,
+}
+
+struct Candidate {
+    name: String,
+    rel: String,
+    is_mod: bool,
+    bytes: Vec<u8>,
+    print: u32,
+    no_bundle: bool,
+}
+
+struct Plan {
+    entries: Vec<CfEntry>,
+    bundled: Vec<Bundled>,
+    left_out: Vec<String>,
 }
 
 pub fn export_selfupdate(
@@ -56,29 +78,19 @@ pub fn export_selfupdate(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-pub async fn export(
-    cf: &CurseForge,
-    lock: &Lockfile,
-    pack_name: &str,
-    version: &str,
-    output: &Path,
-    env: &str,
-    overrides: &[PackFile],
-    folders: &Folders,
-) -> Result<()> {
+async fn plan(cf: &CurseForge, lock: &Lockfile, env: &str, folders: &Folders) -> Result<Plan> {
     let client = reqwest::Client::builder()
         .user_agent(crate::USER_AGENT)
         .build()?;
-    let mut entries: Vec<CfEntry> = Vec::new();
-    let mut pending: Vec<(String, String, bool, Vec<u8>, u32, bool)> = Vec::new();
-    let mut bundled: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut plan = Plan {
+        entries: Vec::new(),
+        bundled: Vec::new(),
+        left_out: Vec::new(),
+    };
+    let mut pending: Vec<Candidate> = Vec::new();
 
     for m in &lock.mods {
-        if env == "server" && m.server_side == "unsupported" {
-            continue;
-        }
-        if env == "client" && m.client_side == "unsupported" {
+        if m.unsupported_on(env) {
             continue;
         }
         let datapack = m.project_type == ProjectType::Datapack;
@@ -89,7 +101,7 @@ pub async fn export(
             Some((project, file))
         });
         if let Some((project_id, file_id)) = listed.filter(|_| !datapack || src.is_none()) {
-            entries.push(CfEntry {
+            plan.entries.push(CfEntry {
                 project_id,
                 file_id,
                 name: m.name.clone(),
@@ -98,8 +110,13 @@ pub async fn export(
             continue;
         }
         let Some(src) = src else {
+            plan.left_out.push(m.name.clone());
             continue;
         };
+        if datapack && m.no_bundle {
+            plan.left_out.push(m.name.clone());
+            continue;
+        }
         let bytes = client
             .get(&src.download_url)
             .send()
@@ -111,37 +128,74 @@ pub async fn export(
             .with_context(|| format!("downloading {}", m.name))?;
         let rel = format!("{}/{}", folders.install_dir(m.project_type), src.filename);
         if datapack {
-            if !m.no_bundle {
-                bundled.push((rel, bytes.to_vec()));
-            }
+            plan.bundled.push(Bundled {
+                name: m.name.clone(),
+                rel,
+                bytes: bytes.to_vec(),
+            });
             continue;
         }
-        let print = curseforge::cf_fingerprint(&bytes);
-        pending.push((
-            m.name.clone(),
+        pending.push(Candidate {
+            name: m.name.clone(),
             rel,
-            m.project_type == ProjectType::Mod,
-            bytes.to_vec(),
-            print,
-            m.no_bundle,
-        ));
+            is_mod: m.project_type == ProjectType::Mod,
+            print: curseforge::cf_fingerprint(&bytes),
+            bytes: bytes.to_vec(),
+            no_bundle: m.no_bundle,
+        });
     }
 
-    let prints: Vec<u32> = pending.iter().map(|p| p.4).collect();
-    let matched = cf.fingerprints(&prints).await.unwrap_or_default();
-    for (name, rel, is_mod, bytes, print, no_bundle) in pending {
-        match matched.get(&(print as u64)) {
-            Some((mod_id, file)) => entries.push(CfEntry {
+    let prints: Vec<u32> = pending.iter().map(|c| c.print).collect();
+    let matched = cf
+        .fingerprints(&prints)
+        .await
+        .map_err(|e| anyhow!("Couldn't match files against CurseForge: {e}"))?;
+    for c in pending {
+        match matched.get(&(c.print as u64)) {
+            Some((mod_id, file)) => plan.entries.push(CfEntry {
                 project_id: *mod_id as u64,
                 file_id: file.id as u64,
-                name,
-                is_mod,
+                name: c.name,
+                is_mod: c.is_mod,
             }),
-            None if no_bundle => {}
-            None => bundled.push((rel, bytes)),
+            None if c.no_bundle => plan.left_out.push(c.name),
+            None => plan.bundled.push(Bundled {
+                name: c.name,
+                rel: c.rel,
+                bytes: c.bytes,
+            }),
         }
     }
+    Ok(plan)
+}
 
+pub async fn bundling(
+    cf: &CurseForge,
+    lock: &Lockfile,
+    env: &str,
+    folders: &Folders,
+) -> Result<Bundling> {
+    let plan = plan(cf, lock, env, folders).await?;
+    Ok(Bundling {
+        bundled: plan.bundled.into_iter().map(|b| b.name).collect(),
+        left_out: plan.left_out,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn export(
+    cf: &CurseForge,
+    lock: &Lockfile,
+    pack_name: &str,
+    version: &str,
+    output: &Path,
+    env: &str,
+    overrides: &[PackFile],
+    folders: &Folders,
+) -> Result<()> {
+    let Plan {
+        entries, bundled, ..
+    } = plan(cf, lock, env, folders).await?;
     let files: Vec<Value> = entries
         .iter()
         .map(|e| {
@@ -170,13 +224,13 @@ pub async fn export(
     zip.write_all(modlist_html(&entries).as_bytes())?;
 
     let mut written: HashSet<String> = HashSet::new();
-    for (rel, bytes) in &bundled {
-        let name = format!("overrides/{rel}");
+    for b in &bundled {
+        let name = format!("overrides/{}", b.rel);
         if !written.insert(name.clone()) {
             continue;
         }
         zip.start_file(name, options)?;
-        zip.write_all(bytes)?;
+        zip.write_all(&b.bytes)?;
     }
     for file in overrides {
         let name = format!("overrides/{}", file.rel);

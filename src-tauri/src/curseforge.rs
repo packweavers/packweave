@@ -391,16 +391,15 @@ fn murmurhash2(data: &[u8], seed: u32) -> u32 {
     const R: u32 = 24;
     let len = data.len() as u32;
     let mut h: u32 = seed ^ len;
-    let mut chunks = data.chunks_exact(4);
-    for c in chunks.by_ref() {
-        let mut k = u32::from_le_bytes([c[0], c[1], c[2], c[3]]);
+    let (chunks, rem) = data.as_chunks::<4>();
+    for c in chunks {
+        let mut k = u32::from_le_bytes(*c);
         k = k.wrapping_mul(M);
         k ^= k >> R;
         k = k.wrapping_mul(M);
         h = h.wrapping_mul(M);
         h ^= k;
     }
-    let rem = chunks.remainder();
     if !rem.is_empty() {
         let mut tail: u32 = 0;
         for (i, &b) in rem.iter().enumerate() {

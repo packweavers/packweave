@@ -1,4 +1,5 @@
 import { call } from './call'
+import type { Bundling } from './types'
 
 type ExportSide = 'common' | 'client' | 'server'
 
@@ -44,6 +45,14 @@ export function exportCurseforgeSelfUpdate(
 
 export function exportDist(dir: string, output: string, packUrl: string): Promise<void> {
 	return call('export_dist', { path: dir, output, packUrl })
+}
+
+export function publishBundling(
+	target: 'modrinth' | 'curseforge',
+	dir: string,
+	env: ExportSide,
+): Promise<Bundling> {
+	return call('publish_bundling', { target, path: dir, env })
 }
 
 export function publish(

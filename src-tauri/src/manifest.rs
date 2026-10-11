@@ -47,6 +47,14 @@ pub enum Channel {
 }
 
 impl Channel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Channel::Release => "release",
+            Channel::Beta => "beta",
+            Channel::Alpha => "alpha",
+        }
+    }
+
     pub fn rank(self) -> u8 {
         match self {
             Channel::Release => 0,

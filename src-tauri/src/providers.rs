@@ -135,6 +135,7 @@ pub struct ProviderProject {
 }
 
 #[async_trait]
+#[allow(clippy::double_must_use)]
 pub trait Provider: Send + Sync {
     fn id(&self) -> ProviderId;
     fn display_name(&self) -> &'static str;

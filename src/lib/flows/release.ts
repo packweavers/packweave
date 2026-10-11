@@ -11,9 +11,9 @@ import { ws } from '@/lib/state/workspace.svelte'
 import { packDistToken } from '@/lib/tauri/app'
 import * as gitApi from '@/lib/tauri/git'
 import * as releaseApi from '@/lib/tauri/release'
-import type { Channel } from '@/lib/tauri/types'
+import type { Bundling, Channel } from '@/lib/tauri/types'
 import { openExternal, openFolder, pickFolder } from '@/lib/tauri/windows'
-import { plural } from '@/lib/util/format'
+import { listNames, plural } from '@/lib/util/format'
 import { join } from '@/lib/util/path'
 import { githubRepo, slugify } from '@/lib/util/text'
 
@@ -249,6 +249,7 @@ async function pushedCommit(dir: string, plan: ReleasePlan, tag: string): Promis
 	}
 	const pushed = JSON.parse(await gitApi.showFile(dir, commit, 'modpack.json')) as {
 		version?: string
+		channel?: Channel
 	}
 	if (pushed.version !== plan.version) {
 		toasts.info(
@@ -256,7 +257,53 @@ async function pushedCommit(dir: string, plan: ReleasePlan, tag: string): Promis
 		)
 		return ''
 	}
+	const channel = pushed.channel ?? 'release'
+	if (channel !== plan.channel) {
+		toasts.info(
+			`The pushed modpack.json is on the ${channel} channel. Push the channel change first`,
+		)
+		return ''
+	}
 	return commit
+}
+
+const PLATFORMS = {
+	modrinth: { name: 'Modrinth', review: 'Modrinth asks for permission to redistribute' },
+	curseforge: { name: 'CurseForge', review: "CurseForge's review may reject" },
+} as const
+
+function bundlingText(target: keyof typeof PLATFORMS, found: Bundling): string[] {
+	const { name, review } = PLATFORMS[target]
+	const notes: string[] = []
+	const bundled = found.bundled.length
+	if (bundled > 0) {
+		const one = bundled === 1
+		notes.push(
+			`${listNames(found.bundled, 5)} ${one ? "isn't" : "aren't"} on ${name}, so ${one ? 'its file is' : 'their files are'} bundled into the pack. ${review} ${one ? 'it' : 'them'}.`,
+		)
+	}
+	const left = found.leftOut.length
+	if (left > 0) {
+		const one = left === 1
+		notes.push(
+			`${listNames(found.leftOut, 5)} ${one ? "isn't" : "aren't"} on ${name} and can't be bundled, so ${one ? "it's" : "they're"} left out of the pack.`,
+		)
+	}
+	return notes
+}
+
+async function bundlingNotes(dir: string, release: ReleasePrefs): Promise<string[]> {
+	const targets: (keyof typeof PLATFORMS)[] = []
+	if (onModrinth(release)) targets.push('modrinth')
+	if (onCurseforge(release)) targets.push('curseforge')
+	const notes: string[] = []
+	for (const target of targets) {
+		const found = await tasks
+			.run('Checking what gets bundled', () => releaseApi.publishBundling(target, dir, 'common'))
+			.catch(tasks.or('Checking what gets bundled', null))
+		if (found) notes.push(...bundlingText(target, found))
+	}
+	return notes
 }
 
 export async function publish(plan: ReleasePlan): Promise<void> {
@@ -279,21 +326,6 @@ export async function publish(plan: ReleasePlan): Promise<void> {
 		const short = commit ? commit.slice(0, 7) : null
 		const updateRepo = release.updates === 'github' ? await releaseRepo(dir, release) : null
 		const warning = updateRepo ? await tokenWarning(dir, updateRepo) : undefined
-		const ok = await dialogs.open(ConfirmDialog, {
-			title: `Publish ${tag}?`,
-			message: [
-				commit ? `Publishes ${git.status?.upstream ?? 'the pushed branch'} at ${short}.` : null,
-				warning,
-			]
-				.filter((part) => !!part)
-				.join(' '),
-			steps: await steps(dir, release, plan.version, repo, short),
-			confirm: 'Publish',
-		})
-		if (!ok) return
-		if (!commit) await writeVersion(plan)
-		const remoteRepo = commit ? await gitApi.githubRepo(dir).catch(() => null) : null
-		if (commit && repo) await gitApi.markTag(dir, tag, commit)
 		const built = commit
 			? await tasks.run('Checking out the release', () => releaseApi.releaseCheckout(dir, commit))
 			: dir
@@ -301,6 +333,22 @@ export async function publish(plan: ReleasePlan): Promise<void> {
 		let folder: string | null = null
 		let written: string[] = []
 		try {
+			const ok = await dialogs.open(ConfirmDialog, {
+				title: `Publish ${tag}?`,
+				message: [
+					commit ? `Publishes ${git.status?.upstream ?? 'the pushed branch'} at ${short}.` : null,
+					warning,
+				]
+					.filter((part) => !!part)
+					.join(' '),
+				steps: await steps(dir, release, plan.version, repo, short),
+				notes: await bundlingNotes(built, release),
+				confirm: 'Publish',
+			})
+			if (!ok) return
+			if (!commit) await writeVersion(plan)
+			const remoteRepo = commit ? await gitApi.githubRepo(dir).catch(() => null) : null
+			if (commit && repo) await gitApi.markTag(dir, tag, commit)
 			const jobs = await plannedExports(dir, release, plan.version)
 			if (jobs.length > 0) {
 				folder = repo

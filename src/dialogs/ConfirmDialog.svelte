@@ -5,13 +5,23 @@
 		title: string
 		message?: string
 		steps?: string[]
+		notes?: string[]
 		confirm: string
 		danger?: boolean
 		checkbox?: string
 		close: (result?: { checked: boolean }) => void
 	}
 
-	let { title, message, steps = [], confirm, danger = false, checkbox, close }: Props = $props()
+	let {
+		title,
+		message,
+		steps = [],
+		notes = [],
+		confirm,
+		danger = false,
+		checkbox,
+		close,
+	}: Props = $props()
 
 	let checked = $state(false)
 </script>
@@ -25,6 +35,7 @@
 			{/each}
 		</ol>
 	{/if}
+	{#each notes as note (note)}<p>{note}</p>{/each}
 	{#if checkbox}
 		<label class="check"><input type="checkbox" bind:checked />{checkbox}</label>
 	{/if}

@@ -8,11 +8,12 @@ use std::path::Path;
 use zip::write::SimpleFileOptions;
 use zip::CompressionMethod;
 
-use crate::lockfile::{LockedMod, Lockfile};
+use crate::lockfile::{LockedMod, Lockfile, SourceFile};
 use crate::manifest::Manifest;
 use crate::packignore::PackFile;
 use crate::providers::ProviderId;
 use crate::ptype::Folders;
+use crate::publish::Bundling;
 
 const ALLOWED_HOSTS: &[&str] = &[
     "cdn.modrinth.com",
@@ -107,21 +108,15 @@ pub async fn export(
     let mut bundled: Vec<(String, Vec<u8>)> = Vec::new();
 
     for m in &lock.mods {
-        if env == "server" && m.server_side == "unsupported" {
+        if m.unsupported_on(env) {
             continue;
         }
-        if env == "client" && m.client_side == "unsupported" {
-            continue;
-        }
-        let src = match m.sources.get(&ProviderId::Modrinth) {
-            Some(s) if !s.download_url.is_empty() => s,
-            _ => match m.active() {
-                Some(s) if !s.download_url.is_empty() => s,
-                _ => continue,
-            },
+        let (src, allowed) = match placement(m) {
+            Placement::LeftOut => continue,
+            Placement::Linked(src, url) => (src, Some(url)),
+            Placement::Bundled(src) => (src, None),
         };
         let path = format!("{}/{}", folders.install_dir(m.project_type), src.filename);
-        let allowed = allowed_url(&src.download_url);
 
         let sha1 = src.sha1.as_deref().filter(|s| !s.is_empty());
         let sha512 = src.sha512.as_deref().filter(|s| !s.is_empty());
@@ -132,9 +127,6 @@ pub async fn export(
             }
         }
 
-        if m.no_bundle && allowed.is_none() {
-            continue;
-        }
         let bytes = client
             .get(&src.download_url)
             .send()
@@ -204,6 +196,39 @@ pub async fn export(
 
     zip.finish()?;
     Ok(())
+}
+
+enum Placement<'a> {
+    Linked(&'a SourceFile, String),
+    Bundled(&'a SourceFile),
+    LeftOut,
+}
+
+fn placement(m: &LockedMod) -> Placement<'_> {
+    let src = match m.sources.get(&ProviderId::Modrinth) {
+        Some(s) if !s.download_url.is_empty() => s,
+        _ => match m.active() {
+            Some(s) if !s.download_url.is_empty() => s,
+            _ => return Placement::LeftOut,
+        },
+    };
+    match allowed_url(&src.download_url) {
+        Some(url) => Placement::Linked(src, url),
+        None if m.no_bundle => Placement::LeftOut,
+        None => Placement::Bundled(src),
+    }
+}
+
+pub fn bundling(lock: &Lockfile, env: &str) -> Bundling {
+    let mut out = Bundling::default();
+    for m in lock.mods.iter().filter(|m| !m.unsupported_on(env)) {
+        match placement(m) {
+            Placement::Linked(..) => {}
+            Placement::Bundled(_) => out.bundled.push(m.name.clone()),
+            Placement::LeftOut => out.left_out.push(m.name.clone()),
+        }
+    }
+    out
 }
 
 fn loader_key(loader: &str) -> Option<&'static str> {

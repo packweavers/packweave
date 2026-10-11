@@ -1,17 +1,17 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::State;
 
 use crate::cfpack;
 use crate::curseforge::CurseForge;
 use crate::dist;
 use crate::instance;
-use crate::lockfile;
-use crate::manifest;
+use crate::lockfile::{self, Lockfile};
+use crate::manifest::{self, Manifest};
 use crate::modrinth::Modrinth;
 use crate::mrpack;
-use crate::packignore::ExportFilter;
+use crate::packignore::{ExportFilter, PackFile};
 use crate::ptype::Folders;
-use crate::publish;
+use crate::publish::{self, Bundling};
 use crate::secrets;
 
 use super::{blocking, dist_token, es, resolve_loader_version};
@@ -195,6 +195,31 @@ pub async fn export_dist(
     .map_err(es)
 }
 
+fn publish_inputs(dir: &Path) -> Result<(Lockfile, Manifest, Vec<PackFile>), String> {
+    let filter = ExportFilter::load(dir);
+    let mut lock = lockfile::read(dir).map_err(es)?;
+    lock.mods.retain(|m| !m.disabled && !filter.skips_mod(m));
+    let manifest = manifest::read(dir).map_err(es)?;
+    let overrides = filter.overrides(dir);
+    Ok((lock, manifest, overrides))
+}
+
+#[tauri::command]
+pub async fn publish_bundling(
+    cf: State<'_, CurseForge>,
+    target: String,
+    path: String,
+    env: String,
+) -> Result<Bundling, String> {
+    let (lock, manifest, _) = publish_inputs(Path::new(&path))?;
+    match target.as_str() {
+        "curseforge" => cfpack::bundling(&cf, &lock, &env, &Folders::of(&manifest))
+            .await
+            .map_err(es),
+        _ => Ok(mrpack::bundling(&lock, &env)),
+    }
+}
+
 #[tauri::command]
 pub async fn publish_pack(
     cf: State<'_, CurseForge>,
@@ -205,12 +230,7 @@ pub async fn publish_pack(
     changelog: String,
     env: String,
 ) -> Result<String, String> {
-    let dir = PathBuf::from(&path);
-    let filter = ExportFilter::load(&dir);
-    let mut lock = lockfile::read(&dir).map_err(es)?;
-    lock.mods.retain(|m| !m.disabled && !filter.skips_mod(m));
-    let manifest = manifest::read(&dir).map_err(es)?;
-    let overrides = filter.overrides(&dir);
+    let (lock, manifest, overrides) = publish_inputs(Path::new(&path))?;
     match target.as_str() {
         "curseforge" => {
             let token = secrets::get("curseforge_token").unwrap_or_default();
