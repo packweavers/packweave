@@ -6,12 +6,26 @@ use zip::write::SimpleFileOptions;
 use zip::CompressionMethod;
 
 use crate::instance;
-use crate::lockfile::{self, target_dir};
+use crate::lockfile;
 use crate::manifest::{self, Manifest};
+use crate::packignore::ExportFilter;
+use crate::ptype::Folders;
 
-pub(crate) const INSTALLER: &[u8] =
-    include_bytes!("../../installer/packweaver.jar");
+pub(crate) const INSTALLER: &[u8] = include_bytes!("../../installer/packweaver.jar");
 pub(crate) const INSTALLER_JAR: &str = "packweaver.jar";
+pub(crate) const PACK_JAR: &str = "overrides/packweaver.jar";
+pub(crate) const PACK_MOD_JAR: &str = "overrides/mods/packweaver.jar";
+
+pub fn include_installer(pack_dir: &Path) -> Result<()> {
+    let path = pack_dir.join(PACK_JAR);
+    if std::fs::read(&path).ok().as_deref() != Some(INSTALLER) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&path, INSTALLER)?;
+    }
+    crate::content::write_index(pack_dir)
+}
 
 pub fn export_dist(
     pack_dir: &Path,
@@ -43,10 +57,9 @@ fn write_prism_instance(
 ) -> Result<()> {
     let file = std::fs::File::create(out_zip)?;
     let mut zip = zip::ZipWriter::new(file);
-    let options = SimpleFileOptions::default()
-        .compression_method(CompressionMethod::Deflated);
+    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
 
-    let key = sanitize(&manifest.name);
+    let key = icon_key(&manifest.name);
     let mut cfg = format!(
         "InstanceType=OneSix\nname={}\nOverrideJavaArgs=true\nJvmArgs=-javaagent:{}\n",
         manifest.name, INSTALLER_JAR
@@ -73,8 +86,10 @@ fn write_prism_instance(
         zip.write_all(format!("{t}\n").as_bytes())?;
     }
 
-    zip.start_file(format!(".minecraft/{INSTALLER_JAR}"), options)?;
-    zip.write_all(INSTALLER)?;
+    for folder in [".minecraft", ".minecraft/mods"] {
+        zip.start_file(format!("{folder}/{INSTALLER_JAR}"), options)?;
+        zip.write_all(INSTALLER)?;
+    }
 
     zip.finish()?;
     Ok(())
@@ -86,9 +101,11 @@ pub async fn export_instance(
     env: &str,
     loader_version: Option<&str>,
 ) -> Result<()> {
+    let filter = ExportFilter::load(pack_dir);
     let mut manifest = manifest::read(pack_dir)?;
+    let folders = Folders::of(&manifest);
     let mut lock = lockfile::read(pack_dir)?;
-    lock.mods.retain(|m| !m.disabled);
+    lock.mods.retain(|m| !m.disabled && !filter.skips_mod(m));
     if manifest.loader_version.as_deref().unwrap_or("").is_empty() {
         manifest.loader_version = loader_version.map(str::to_string);
     }
@@ -98,11 +115,10 @@ pub async fn export_instance(
 
     let file = std::fs::File::create(out_zip)?;
     let mut zip = zip::ZipWriter::new(file);
-    let options = SimpleFileOptions::default()
-        .compression_method(CompressionMethod::Deflated);
+    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
 
     let icon = icon_bytes(pack_dir);
-    let key = sanitize(&manifest.name);
+    let key = icon_key(&manifest.name);
     let mut cfg = format!("InstanceType=OneSix\nname={}\n", manifest.name);
     if icon.is_some() {
         cfg.push_str(&format!("iconKey={key}\n"));
@@ -126,14 +142,14 @@ pub async fn export_instance(
             continue;
         }
         let src = match m.active() {
-            Some(s) if !s.download_url.is_empty() => s,
+            Some(s) if !s.download_url.is_empty() && !m.no_bundle => s,
             _ => continue,
         };
         let bytes = client.get(&src.download_url).send().await?.bytes().await?;
         zip.start_file(
             format!(
                 ".minecraft/{}/{}",
-                target_dir(m.project_type),
+                folders.install_dir(m.project_type),
                 src.filename
             ),
             options,
@@ -141,38 +157,12 @@ pub async fn export_instance(
         zip.write_all(&bytes)?;
     }
 
-    let overrides = instance::overrides_dir(pack_dir);
-    if overrides.is_dir() {
-        zip_overrides(&mut zip, &overrides, &overrides, options)?;
+    for file in filter.overrides(pack_dir) {
+        zip.start_file(format!(".minecraft/{}", file.rel), options)?;
+        zip.write_all(&std::fs::read(&file.path)?)?;
     }
 
     zip.finish()?;
-    Ok(())
-}
-
-fn zip_overrides(
-    zip: &mut zip::ZipWriter<std::fs::File>,
-    base: &Path,
-    dir: &Path,
-    options: SimpleFileOptions,
-) -> Result<()> {
-    for entry in std::fs::read_dir(dir)?.flatten() {
-        let p = entry.path();
-        if p.is_dir() {
-            zip_overrides(zip, base, &p, options)?;
-        } else if p.is_file() {
-            let rel = p
-                .strip_prefix(base)
-                .map(|r| r.to_string_lossy().replace('\\', "/"))
-                .unwrap_or_default();
-            if instance::is_os_junk(&rel) {
-                continue;
-            }
-            let bytes = std::fs::read(&p)?;
-            zip.start_file(format!(".minecraft/{rel}"), options)?;
-            zip.write_all(&bytes)?;
-        }
-    }
     Ok(())
 }
 
@@ -211,7 +201,7 @@ pub(crate) fn loader_uid(loader: &str) -> Option<&'static str> {
     }
 }
 
-fn sanitize(name: &str) -> String {
+fn icon_key(name: &str) -> String {
     let s: String = name
         .chars()
         .map(|c| {

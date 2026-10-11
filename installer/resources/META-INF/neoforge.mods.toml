@@ -4,6 +4,6 @@ license="All Rights Reserved"
 
 [[mods]]
 modId="packweaver"
-version="1.0.0"
+version="2.0.0"
 displayName="packweaver"
 description="Keeps this instance in sync with its pack."

@@ -1,7 +1,11 @@
 {
-  "semi": false,
-  "singleQuote": true,
-  "printWidth": 100,
-  "useTabs": true,
-  "trailingComma": "all"
+	"semi": false,
+	"singleQuote": true,
+	"printWidth": 100,
+	"useTabs": true,
+	"trailingComma": "all",
+	"plugins": ["prettier-plugin-svelte", "@ianvs/prettier-plugin-sort-imports"],
+	"importOrder": ["<THIRD_PARTY_MODULES>", "", "^@/", "", "^[./]"],
+	"importOrderTypeScriptVersion": "5.0.0",
+	"overrides": [{ "files": "*.svelte", "options": { "parser": "svelte" } }]
 }

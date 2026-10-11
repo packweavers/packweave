@@ -1,14 +1,13 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "packweave",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "identifier": "com.packweave",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
     "beforeDevCommand": "pnpm dev",
-    "beforeBuildCommand": "pnpm build",
-    "beforeBundleCommand": "node src-tauri/scripts/build-appicon.mjs"
+    "beforeBuildCommand": "pnpm build"
   },
   "app": {
     "windows": [
@@ -39,15 +38,12 @@
       "icons/icon.ico",
       "icons/icon.png"
     ],
-    "createUpdaterArtifacts": true,
-    "macOS": {
-      "files": {
-        "Resources/Assets.car": "target/appicon/Assets.car"
-      },
-      "infoPlist": "target/appicon/Info.plist"
-    }
+    "createUpdaterArtifacts": true
   },
   "plugins": {
+    "opener": {
+      "requireLiteralLeadingDot": false
+    },
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI3ODk0ODM1RTQ1Qzc1MjUKUldRbGRWemtOVWlKSjVmTEJERTFZN2c1L3lNeUtaQ2R4ZUZMUmJYVUp5MXVabmVaMFhPVHI1VW0K",
       "endpoints": [

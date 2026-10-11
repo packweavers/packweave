@@ -63,12 +63,18 @@ pub struct CfMod {
     pub class_id: Option<u32>,
 }
 
-pub fn type_from_class(id: Option<u32>) -> ProjectType {
-    match id {
-        Some(12) => ProjectType::Resourcepack,
-        Some(6552) => ProjectType::Shader,
-        _ => ProjectType::Mod,
+pub fn content_type(class: Option<u32>) -> Option<ProjectType> {
+    match class {
+        None | Some(6) => Some(ProjectType::Mod),
+        Some(12) => Some(ProjectType::Resourcepack),
+        Some(6552) => Some(ProjectType::Shader),
+        Some(6945) => Some(ProjectType::Datapack),
+        Some(_) => None,
     }
+}
+
+pub fn type_from_class(id: Option<u32>) -> ProjectType {
+    content_type(id).unwrap_or_default()
 }
 
 #[derive(Deserialize, Clone)]
@@ -152,10 +158,7 @@ impl CurseForge {
         Ok(())
     }
 
-    async fn get_json<T: for<'de> Deserialize<'de>>(
-        &self,
-        url: &str,
-    ) -> Result<T> {
+    async fn get_json<T: for<'de> Deserialize<'de>>(&self, url: &str) -> Result<T> {
         self.ensure()?;
         let resp = self
             .client
@@ -202,12 +205,7 @@ impl CurseForge {
         Ok(resp.data)
     }
 
-    pub async fn mod_files(
-        &self,
-        id: u32,
-        mc: &str,
-        loader: &str,
-    ) -> Result<Vec<CfFile>> {
+    pub async fn mod_files(&self, id: u32, mc: &str, loader: &str) -> Result<Vec<CfFile>> {
         let loader_t = loader_type(loader);
         let mut url = format!("{API_BASE}/v1/mods/{id}/files?pageSize=50");
         if !mc.is_empty() {
@@ -226,18 +224,10 @@ impl CurseForge {
         Ok(resp.data)
     }
 
-    pub fn download_url(&self, file: &CfFile) -> String {
-        if let Some(u) = &file.download_url {
-            if !u.is_empty() {
-                return u.clone();
-            }
-        }
-        let a = file.id / 1000;
-        let b = file.id % 1000;
-        format!(
-            "https://edge.forgecdn.net/files/{a}/{b}/{}",
-            file.file_name.replace(' ', "%20")
-        )
+    pub async fn file_changelog(&self, mod_id: u32, file_id: u32) -> Result<String> {
+        let url = format!("{API_BASE}/v1/mods/{mod_id}/files/{file_id}/changelog");
+        let resp: OneResp<String> = self.get_json(&url).await?;
+        Ok(resp.data)
     }
 
     pub async fn resolve(
@@ -253,24 +243,27 @@ impl CurseForge {
             .map_err(|_| anyhow!("Invalid CurseForge id '{mod_id}'"))?;
         let file = match version {
             Some(fid) if !fid.is_empty() => {
-                let f: u32 = fid.parse().map_err(|_| {
-                    anyhow!("Invalid CurseForge file id '{fid}'")
-                })?;
+                let f: u32 = fid
+                    .parse()
+                    .map_err(|_| anyhow!("Invalid CurseForge file id '{fid}'"))?;
                 self.get_file(id, f).await?
             }
             _ => {
                 let files = self.mod_files(id, mc, loader).await?;
-                pick_file(files, channel).ok_or_else(|| {
-                    anyhow!("No CurseForge file for Minecraft {mc} on {loader}")
-                })?
+                pick_file(files, channel).ok_or_else(|| crate::providers::no_version(mc, loader))?
             }
         };
+        let download_url = file
+            .download_url
+            .clone()
+            .filter(|u| !u.is_empty())
+            .ok_or_else(|| anyhow!("Only downloadable through CurseForge"))?;
         let info = self.get_mod(id).await.ok();
         Ok(CfResolved {
             file_id: file.id,
             version: file_version(&file),
             filename: file.file_name.clone(),
-            download_url: self.download_url(&file),
+            download_url,
             sha1: file
                 .hashes
                 .iter()
@@ -309,12 +302,7 @@ impl CurseForge {
         Ok(results.into_iter().flatten().collect())
     }
 
-    pub async fn versions(
-        &self,
-        id: &str,
-        mc: &str,
-        loader: &str,
-    ) -> Result<Vec<VersionInfo>> {
+    pub async fn versions(&self, id: &str, mc: &str, loader: &str) -> Result<Vec<VersionInfo>> {
         let nid: u32 = id
             .parse()
             .map_err(|_| anyhow!("Invalid CurseForge id '{id}'"))?;
@@ -332,10 +320,7 @@ impl CurseForge {
             .collect())
     }
 
-    pub async fn mods_named(
-        &self,
-        ids: &[String],
-    ) -> HashMap<String, (String, String)> {
+    pub async fn mods_named(&self, ids: &[String]) -> HashMap<String, (String, String)> {
         if !Self::configured() {
             return HashMap::new();
         }
@@ -360,13 +345,13 @@ impl CurseForge {
         Ok(resp
             .data
             .into_iter()
-            .find(|m| m.slug.eq_ignore_ascii_case(slug)))
+            .filter(|m| m.slug.eq_ignore_ascii_case(slug))
+            .filter_map(|m| content_type(m.class_id).map(|kind| (kind, m)))
+            .min_by_key(|(kind, _)| *kind)
+            .map(|(_, m)| m))
     }
 
-    pub async fn fingerprints(
-        &self,
-        hashes: &[u32],
-    ) -> Result<HashMap<u64, (u32, CfFile)>> {
+    pub async fn fingerprints(&self, hashes: &[u32]) -> Result<HashMap<u64, (u32, CfFile)>> {
         if hashes.is_empty() || !Self::configured() {
             return Ok(HashMap::new());
         }
@@ -462,6 +447,7 @@ fn class_id(project_type: ProjectType) -> u32 {
     match project_type {
         ProjectType::Resourcepack => 12,
         ProjectType::Shader => 6552,
+        ProjectType::Datapack => 6945,
         ProjectType::Mod => 6,
     }
 }
@@ -477,7 +463,16 @@ fn loader_type(loader: &str) -> u32 {
 }
 
 fn urlencode(s: &str) -> String {
-    s.replace(' ', "%20")
-        .replace('&', "%26")
-        .replace('#', "%23")
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
+            out.push(char::from(b));
+        } else {
+            out.push('%');
+            out.push(char::from(HEX[usize::from(b >> 4)]));
+            out.push(char::from(HEX[usize::from(b & 15)]));
+        }
+    }
+    out
 }

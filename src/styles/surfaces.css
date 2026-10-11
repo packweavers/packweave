@@ -1,0 +1,348 @@
+.bar {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	white-space: nowrap;
+	padding-left: 14px;
+}
+
+.bar:not(
+	:has(
+		> .btn:last-child,
+		> .icon-btn:last-child,
+		> .seg:last-child,
+		> .chip:last-child,
+		> .field:last-child
+	)
+) {
+	padding-right: 14px;
+}
+
+.bar > :is(.btn, .icon-btn, .seg, .chip, .field) {
+	align-self: stretch;
+	height: auto;
+}
+
+.bar > .btn + :is(.btn, .icon-btn),
+.bar > .icon-btn + .btn {
+	margin-left: -5px;
+}
+
+.bar > .icon-btn {
+	width: var(--bar);
+}
+
+.doc-toolbar {
+	height: var(--bar);
+	border-bottom: 1px solid var(--line);
+}
+
+.doc-toolbar .doc-title {
+	font-weight: 600;
+}
+
+.footer-bar {
+	min-height: var(--footer);
+	border-top: 1px solid var(--line);
+}
+
+.footer-bar > .btn {
+	padding: 0 14px;
+}
+
+.band {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 26px;
+	padding: 0 10px;
+	background: var(--band);
+	font-size: 12.5px;
+	font-weight: 600;
+	white-space: nowrap;
+}
+
+.band.bar {
+	min-height: var(--row);
+	padding-left: 16px;
+}
+
+.band .count-text,
+.count-text {
+	font: 500 11px var(--font-mono);
+}
+
+.view-header {
+	height: var(--bar);
+	background: var(--band);
+	font-size: 13px;
+	font-weight: 600;
+}
+
+.thead {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	height: var(--row);
+	padding: 0 12px 0 16px;
+	border-bottom: 1px solid var(--line);
+	background: var(--band);
+	font-size: 12.5px;
+	font-weight: 600;
+	white-space: nowrap;
+}
+
+.trow {
+	position: relative;
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	height: var(--row);
+	padding: 0 12px 0 16px;
+	border-bottom: 1px solid var(--line);
+	white-space: nowrap;
+	min-width: 0;
+}
+
+.trow:has(> .row-actions:last-child, > .btn:last-child, > .icon-btn:last-child) {
+	padding-right: 0;
+}
+
+.trow > :is(.btn, .icon-btn) {
+	align-self: stretch;
+	height: auto;
+}
+
+.trow:hover {
+	background: var(--hover);
+}
+
+.trow.selected {
+	background: var(--selected-idle);
+}
+
+:focus-within > .trow.selected,
+.list:focus-within .trow.selected {
+	background: var(--selected);
+}
+
+.trow .name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	min-width: 0;
+}
+
+.mark {
+	position: absolute;
+	left: 0;
+	top: 0;
+	bottom: 0;
+	width: 3px;
+}
+
+.mark.added {
+	background: var(--green);
+}
+
+.mark.changed {
+	background: var(--yellow);
+}
+
+.mark.removed {
+	background: var(--red);
+}
+
+.row-actions {
+	display: flex;
+	align-items: stretch;
+	align-self: stretch;
+	gap: 1px;
+	margin-left: auto;
+	flex: none;
+	visibility: hidden;
+}
+
+.trow:hover .row-actions,
+.trow.selected .row-actions,
+.trow:focus-within .row-actions {
+	visibility: visible;
+}
+
+.row-actions > :is(.btn, .icon-btn) {
+	height: auto;
+}
+
+.banner {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	min-height: 36px;
+	padding-left: 14px;
+	border-bottom: 1px solid var(--line);
+	font-size: 12.5px;
+	white-space: nowrap;
+}
+
+.banner:not(:has(> .btn:last-child, > .icon-btn:last-child)) {
+	padding-right: 14px;
+}
+
+.banner > :is(.btn, .icon-btn) {
+	align-self: stretch;
+	height: auto;
+}
+
+.banner > .btn + :is(.btn, .icon-btn) {
+	margin-left: -9px;
+}
+
+.banner.warn {
+	background: color-mix(in srgb, var(--yellow) 12%, var(--doc));
+}
+
+.banner.info {
+	background: color-mix(in srgb, var(--focus) 12%, var(--doc));
+}
+
+.banner.error {
+	background: color-mix(in srgb, var(--red) 12%, var(--doc));
+}
+
+.empty {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 14px;
+	padding: 32px;
+	text-align: center;
+}
+
+.empty .actions {
+	display: flex;
+	gap: 1px;
+}
+
+.kv {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 26px;
+	font-size: 12.5px;
+	white-space: nowrap;
+	min-width: 0;
+}
+
+.kv > .k {
+	width: 90px;
+	flex: none;
+}
+
+.kv > .v {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.kv > .field {
+	height: 26px;
+	flex: 1;
+}
+
+.card {
+	border: 1px solid var(--edge);
+	background: var(--doc);
+	overflow: hidden;
+	min-width: 0;
+}
+
+.scroll {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+}
+
+.inspector-head {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 12px 14px;
+	border-bottom: 1px solid var(--line);
+	min-width: 0;
+}
+
+.inspector-head .heading {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+}
+
+.inspector-body {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+	padding: 12px 14px;
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+
+.inspector-section {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	min-width: 0;
+}
+
+.inspector-section > .band {
+	margin: 0 -14px 4px;
+	padding: 0 14px;
+}
+
+.inspector-section > .item-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 28px;
+	margin: 0 -14px;
+	padding: 0 14px;
+	white-space: nowrap;
+}
+
+.inspector-section > button.item-row:hover {
+	background: var(--hover);
+}
+
+.mark-text {
+	width: 14px;
+	flex: none;
+	text-align: center;
+	font: 600 11px var(--font-mono);
+}
+
+.mark-text.added {
+	color: var(--green);
+}
+
+.mark-text.changed {
+	color: var(--yellow);
+}
+
+.mark-text.removed,
+.mark-text.conflict {
+	color: var(--red);
+}
+
+.sub-toolbar {
+	height: var(--bar);
+	border-bottom: 1px solid var(--line);
+}

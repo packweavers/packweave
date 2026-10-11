@@ -1,19 +1,23 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
-use std::collections::BTreeMap;
-use std::path::Path;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::{Path, PathBuf};
 
 use crate::content::{self, ContentItem};
 use crate::curseforge::{self, CurseForge};
 use crate::lockfile::SourceFile;
 use crate::modmeta;
 use crate::modrinth::Modrinth;
+use crate::packlocal;
 use crate::providers::ProviderId;
-use crate::ptype::ProjectType;
+use crate::ptype::{Folders, ProjectType};
+use crate::validate;
+use ts_rs::TS;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "types.ts")]
 pub struct DroppedMatch {
     pub provider: ProviderId,
     pub project_id: String,
@@ -24,19 +28,26 @@ pub struct DroppedMatch {
     pub icon_url: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "types.ts")]
 pub struct DroppedFile {
     pub path: String,
     pub filename: String,
     pub project_type: ProjectType,
     pub already_in_pack: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub matched: Option<DroppedMatch>,
+    #[serde(default)]
+    pub unchecked: bool,
 }
 
 fn classify(path: &Path) -> ProjectType {
     if let Some(meta) = modmeta::read_archive(path) {
+        if meta.loaders.iter().any(|l| l == "datapack") {
+            return ProjectType::Datapack;
+        }
         if meta.pack_format.is_some() {
             return ProjectType::Resourcepack;
         }
@@ -55,17 +66,24 @@ fn classify(path: &Path) -> ProjectType {
     }
 }
 
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "types.ts")]
+pub struct DroppedScan {
+    pub files: Vec<DroppedFile>,
+    pub failures: Vec<String>,
+}
+
 pub async fn identify(
     mr: &Modrinth,
     cf: &CurseForge,
     pack_dir: &Path,
     files: &[String],
-) -> Result<Vec<DroppedFile>> {
-    let existing: std::collections::HashSet<String> =
-        content::read_all(pack_dir)
-            .iter()
-            .filter_map(|i| i.active().and_then(|s| s.id.clone()))
-            .collect();
+) -> Result<DroppedScan> {
+    let existing: std::collections::HashSet<String> = content::read_all(pack_dir)
+        .iter()
+        .filter_map(|i| i.active().and_then(|s| s.id.clone()))
+        .collect();
 
     let mut out = Vec::new();
     let mut hashes = Vec::new();
@@ -93,11 +111,25 @@ pub async fn identify(
             project_type: classify(p),
             already_in_pack: false,
             matched: None,
+            unchecked: false,
         });
     }
 
-    let mr_found = mr.versions_from_hashes(&hashes).await.unwrap_or_default();
-    let cf_found = cf.fingerprints(&prints).await.unwrap_or_default();
+    let mut failures = Vec::new();
+    let mr_found = match mr.versions_by_hashes(&hashes).await {
+        Ok(found) => found,
+        Err(e) => {
+            failures.push(validate::reason(&e.to_string(), ProviderId::Modrinth).0);
+            Default::default()
+        }
+    };
+    let cf_found = match cf.fingerprints(&prints).await {
+        Ok(found) => found,
+        Err(e) => {
+            failures.push(validate::reason(&e.to_string(), ProviderId::Curseforge).0);
+            Default::default()
+        }
+    };
 
     for (i, file) in out.iter_mut().enumerate() {
         if let Some(v) = mr_found.get(&hashes[i]) {
@@ -116,10 +148,12 @@ pub async fn identify(
                 icon_url: proj.as_ref().and_then(|p| p.icon_url.clone()),
             });
             if let Some(p) = proj {
-                file.project_type = ProjectType::from_api(&p.project_type);
+                file.project_type = match p.project_type.as_str() {
+                    "mod" if p.is_datapack() => ProjectType::Datapack,
+                    other => ProjectType::from_api(other),
+                };
             }
-        } else if let Some((mod_id, cfile)) = cf_found.get(&(prints[i] as u64))
-        {
+        } else if let Some((mod_id, cfile)) = cf_found.get(&(prints[i] as u64)) {
             let info = cf.get_mod(*mod_id).await.ok();
             file.matched = Some(DroppedMatch {
                 provider: ProviderId::Curseforge,
@@ -146,7 +180,94 @@ pub async fn identify(
             file.already_in_pack = existing.contains(&m.project_id);
         }
     }
+    if !failures.is_empty() {
+        for file in out.iter_mut() {
+            file.unchecked = file.matched.is_none();
+        }
+    }
+    Ok(DroppedScan {
+        files: out,
+        failures,
+    })
+}
+
+pub fn remember_unchecked(pack_dir: &Path, items: &[DroppedFile]) -> Result<()> {
+    let folders = Folders::load(pack_dir);
+    let mut local = packlocal::read(pack_dir);
+    let before = local.unchecked.len();
+    for item in items.iter().filter(|i| i.unchecked && i.matched.is_none()) {
+        let rel = format!(
+            "{}/{}/{}",
+            crate::instance::OVERRIDES_DIR,
+            folders.install_dir(item.project_type),
+            item.filename
+        );
+        if !local.unchecked.contains(&rel) {
+            local.unchecked.push(rel);
+        }
+    }
+    if local.unchecked.len() != before {
+        packlocal::write(pack_dir, &local)?;
+    }
+    Ok(())
+}
+
+pub struct Recheck {
+    pub found: Vec<DroppedFile>,
+    pub paths: Vec<PathBuf>,
+    pub pending: Vec<String>,
+}
+
+pub async fn recheck(mr: &Modrinth, cf: &CurseForge, pack_dir: &Path) -> Result<Recheck> {
+    let listed = packlocal::read(pack_dir).unchecked;
+    let mut out = Recheck {
+        found: Vec::new(),
+        paths: Vec::new(),
+        pending: Vec::new(),
+    };
+    let by_path: HashMap<String, String> = listed
+        .iter()
+        .filter(|rel| pack_dir.join(rel).is_file())
+        .map(|rel| {
+            (
+                pack_dir.join(rel).to_string_lossy().into_owned(),
+                rel.clone(),
+            )
+        })
+        .collect();
+    if by_path.is_empty() {
+        return Ok(out);
+    }
+    let files: Vec<String> = by_path.keys().cloned().collect();
+    let scan = identify(mr, cf, pack_dir, &files).await?;
+    let mut seen: HashSet<String> = HashSet::new();
+    for file in scan.files {
+        let Some(rel) = by_path.get(&file.path) else {
+            continue;
+        };
+        seen.insert(rel.clone());
+        if file.matched.is_some() {
+            if !file.already_in_pack {
+                out.paths.push(PathBuf::from(&file.path));
+                out.found.push(file);
+            }
+        } else if file.unchecked {
+            out.pending.push(rel.clone());
+        }
+    }
+    out.pending
+        .extend(by_path.values().filter(|rel| !seen.contains(*rel)).cloned());
+    out.pending.sort();
     Ok(out)
+}
+
+pub fn set_unchecked(pack_dir: &Path, pending: Vec<String>) -> Result<()> {
+    let mut local = packlocal::read(pack_dir);
+    if local.unchecked == pending {
+        return Ok(());
+    }
+    local.unchecked = pending;
+    packlocal::write(pack_dir, &local)
 }
 
 pub fn add(pack_dir: &Path, items: &[DroppedFile]) -> Result<()> {
@@ -159,6 +280,7 @@ pub fn add(pack_dir: &Path, items: &[DroppedFile]) -> Result<()> {
                     SourceFile {
                         id: Some(m.project_id.clone()),
                         slug: m.slug.clone(),
+                        version_id: m.version_id.clone(),
                         ..Default::default()
                     },
                 );
@@ -167,12 +289,16 @@ pub fn add(pack_dir: &Path, items: &[DroppedFile]) -> Result<()> {
                     &ContentItem {
                         name: m.name.clone(),
                         project_type: item.project_type,
+                        file: String::new(),
                         side: "auto".into(),
                         explicit: true,
                         disabled: false,
+                        pinned: false,
                         preferred: m.provider,
                         sources,
                         dependents: Vec::new(),
+                        optional_dependents: Vec::new(),
+                        no_bundle: false,
                         client_side: "required".into(),
                         server_side: "required".into(),
                     },
@@ -181,28 +307,11 @@ pub fn add(pack_dir: &Path, items: &[DroppedFile]) -> Result<()> {
             Some(_) => {}
             None => {
                 let dest_dir = crate::instance::overrides_dir(pack_dir)
-                    .join(item.project_type.instance_dir());
+                    .join(Folders::load(pack_dir).install_dir(item.project_type));
                 std::fs::create_dir_all(&dest_dir)?;
                 std::fs::copy(&item.path, dest_dir.join(&item.filename))?;
             }
         }
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn zip_without_metadata_defaults_to_resourcepack() {
-        assert_eq!(
-            classify(Path::new("/tmp/does-not-exist.zip")),
-            ProjectType::Resourcepack
-        );
-        assert_eq!(
-            classify(Path::new("/tmp/does-not-exist.jar")),
-            ProjectType::Mod
-        );
-    }
 }

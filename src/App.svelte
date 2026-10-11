@@ -1,291 +1,174 @@
 <script lang="ts">
-	import { onMount } from 'svelte'
-	import { getCurrentWindow } from '@tauri-apps/api/window'
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
-	import Toolbar from './components/Toolbar.svelte'
-	import WindowControls from './components/WindowControls.svelte'
-	import ResizeHandles from './components/ResizeHandles.svelte'
-	import WelcomeView from './components/WelcomeView.svelte'
-	import { isLinux, isMac } from './util'
-	import ContentView from './components/ContentView.svelte'
-	import FilesView from './components/FilesView.svelte'
-	import InstanceView from './components/InstanceView.svelte'
-	import SourceView from './components/SourceView.svelte'
-	import NewPackModal from './components/NewPackModal.svelte'
-	import StartPackModal from './components/StartPackModal.svelte'
-	import IntroModal from './components/IntroModal.svelte'
-	import SettingsModal from './components/SettingsModal.svelte'
-	import ExportModal from './components/ExportModal.svelte'
-	import InstancePicker from './components/InstancePicker.svelte'
-	import AddPalette from './components/AddPalette.svelte'
-	import SearchPanel from './components/SearchPanel.svelte'
-	import CloneModal from './components/CloneModal.svelte'
-	import AuthModal from './components/AuthModal.svelte'
-	import DeleteConfirm from './components/content/DeleteConfirm.svelte'
-	import ToastHost from './components/ToastHost.svelte'
-	import CommandPalette from './components/CommandPalette.svelte'
-	import DropModal from './components/DropModal.svelte'
-	import ContextMenu from './components/ui/ContextMenu.svelte'
-	import { api } from './api'
-	import { store } from './lib/store.svelte'
-	import { fileFind } from './lib/filefind.svelte'
-	import type { DetectedInstance, DroppedFile } from './types'
+	import { getCurrentWindow } from '@tauri-apps/api/window'
+	import { onMount, untrack } from 'svelte'
 
-	let showStart = $state(false)
-	let showNew = $state(false)
-	let showClone = $state(false)
-	let showExport = $state(false)
-	let showLink = $state(false)
-	let showPickForNew = $state(false)
-	let newInstance = $state<DetectedInstance | null>(null)
-	let showAdd = $state(false)
-	let showFind = $state(false)
-	let showPalette = $state(false)
+	import { dropFiles } from '@/lib/flows/content'
+	import { confirmUnsaved, importDropped } from '@/lib/flows/pack'
+	import { receiveTab } from '@/lib/flows/tabs'
+	import { app } from '@/lib/state/app.svelte'
+	import { handleKey } from '@/lib/state/commands.svelte'
+	import { content } from '@/lib/state/content.svelte'
+	import { dialogs } from '@/lib/state/dialogs.svelte'
+	import { files } from '@/lib/state/files.svelte'
+	import { git } from '@/lib/state/git.svelte'
+	import { instance } from '@/lib/state/instance.svelte'
+	import { panels } from '@/lib/state/panels.svelte'
+	import { tabs } from '@/lib/state/tabs.svelte'
+	import { toasts } from '@/lib/state/toasts.svelte'
+	import { windowState } from '@/lib/state/window.svelte'
+	import { ws } from '@/lib/state/workspace.svelte'
+	import type { IncomingTab } from '@/lib/tauri/types'
+	import { windowPack } from '@/lib/tauri/windows'
+	import { isMac } from '@/lib/util/platform'
+	import ResizeEdges from '@/shell/ResizeEdges.svelte'
+	import TabWindow from '@/shell/TabWindow.svelte'
+	import TitleBar from '@/shell/TitleBar.svelte'
+	import Workbench from '@/shell/Workbench.svelte'
+	import DialogHost from '@/ui/DialogHost.svelte'
+	import MenuHost from '@/ui/MenuHost.svelte'
+	import Toasts from '@/ui/Toasts.svelte'
+	import Welcome from '@/welcome/Welcome.svelte'
+
+	const win = getCurrentWindow()
 	let dragging = $state(false)
-	let dropFiles = $state<DroppedFile[] | null>(null)
-	let fileToOpen = $state<string | undefined>(undefined)
-	let filesKey = $state(0)
-
-	const showIntro = $derived(
-		!store.hasPack && !store.getPref('introSeen', false) && store.recents.length === 0,
-	)
-
-	$effect(() => {
-		if (store.hasPack) {
-			showStart = false
-			showNew = false
-			showClone = false
-		}
-	})
-
-	function onStartPick(choice: 'instance' | 'scratch' | 'import' | 'clone' | 'open') {
-		if (choice === 'scratch') {
-			newInstance = null
-			showNew = true
-		} else if (choice === 'instance') {
-			showPickForNew = true
-		} else if (choice === 'import') {
-			void store.importPack()
-		} else if (choice === 'clone') {
-			showClone = true
-		} else if (choice === 'open') {
-			void store.openPack()
-		}
-	}
-
-	function onPickForNew(inst: DetectedInstance) {
-		showPickForNew = false
-		newInstance = inst
-		showNew = true
-	}
+	let statusKey = ''
 
 	onMount(() => {
-		store.initUi()
-		if (!isMac) getCurrentWindow().show().catch(() => {})
-		void store.checkForUpdate()
-		const unlisten = getCurrentWebviewWindow().onDragDropEvent((event) => {
-			const t = event.payload.type
-			if (t === 'enter' || t === 'over') dragging = true
-			else if (t === 'leave') dragging = false
-			else if (t === 'drop') {
-				dragging = false
-				void handleDrop(event.payload.paths)
-			}
-		})
+		if (!isMac) void win.show()
+		void windowPack()
+			.then((pack) => {
+				if (pack) void ws.open(pack.dir, { detached: pack.detached, tab: pack.tab })
+			})
+			.catch((error) => toasts.error(error))
+		if (win.label === 'main') void app.checkForUpdate()
+
+		const stopFollowing = windowState.follow()
+		const stopSyncing = ws.follow()
+		const stopPanels = panels.follow()
+		const view = getCurrentWebviewWindow()
+		const stops = [
+			view.listen<IncomingTab>('receive-tab', ({ payload }) =>
+				receiveTab(payload.tab, payload.x, payload.y),
+			),
+			view.listen<string>('show-doc', ({ payload }) => tabs.activate(payload)),
+			win.onFocusChanged(({ payload: focused }) => {
+				if (!focused || !ws.isOpen) return
+				void git.refresh()
+				void files.refresh()
+				instance.scanIfStale(20_000)
+				void content.recheckDropped()
+			}),
+			win.onCloseRequested(async (event) => {
+				if (files.dirty.length === 0) return
+				event.preventDefault()
+				if (await confirmUnsaved()) await win.destroy()
+			}),
+			view.onDragDropEvent(({ payload }) => {
+				if (payload.type === 'enter' || payload.type === 'over') {
+					dragging = true
+				} else if (payload.type === 'leave') {
+					dragging = false
+				} else {
+					dragging = false
+					onDrop(payload.paths)
+				}
+			}),
+			view.listen('close-pack', () => void ws.close()),
+		]
+		const online = () => void content.recheckDropped(true)
+		window.addEventListener('online', online)
 		return () => {
-			void unlisten.then((u) => u())
+			stopFollowing()
+			stopSyncing()
+			stopPanels()
+			window.removeEventListener('online', online)
+			for (const stop of stops) void stop.then((unlisten) => unlisten())
 		}
 	})
-
-	async function handleDrop(paths: string[]) {
-		const ext = (p: string) => p.split('.').pop()?.toLowerCase() ?? ''
-		if (!store.hasPack) {
-			const pack = paths.find((p) => ['mrpack', 'zip'].includes(ext(p)))
-			if (pack) await store.importPackFrom(pack)
-			return
-		}
-		const jars = paths.filter((p) => ['jar', 'zip'].includes(ext(p)))
-		if (!jars.length) {
-			if (paths.some((p) => ext(p) === 'mrpack')) {
-				store.notify('info', 'Close this pack first to import an .mrpack.')
-			} else {
-				store.notify('info', 'Drop .jar or .zip files to add them to the pack.')
-			}
-			return
-		}
-		try {
-			const identified = await api.identifyDropped(store.pack!.dir, jars)
-			if (identified.length) dropFiles = identified
-			else store.notify('info', 'Nothing usable in that drop.')
-		} catch (e) {
-			store.notify('error', `${e}`)
-		}
-	}
-
-	function onLink(inst: DetectedInstance) {
-		showLink = false
-		store.linkInstance(inst.gameDir)
-	}
-
-	function openFile(path: string) {
-		showFind = false
-		fileToOpen = path
-		filesKey++
-		store.setView('files')
-	}
 
 	$effect(() => {
-		if (store.view !== 'files') fileToOpen = undefined
+		if (ws.detached && ws.isOpen && tabs.all.length === 0) void win.close()
 	})
-
-	function onKey(e: KeyboardEvent) {
-		if (!(e.metaKey || e.ctrlKey)) return
-		if (e.key === ',') {
-			e.preventDefault()
-			store.settingsOpen = true
-			return
-		}
-		if (!store.hasPack) return
-		if (e.shiftKey && (e.key === 'p' || e.key === 'P')) {
-			e.preventDefault()
-			showPalette = true
-		} else if (e.key === 'k' || e.key === 'K') {
-			e.preventDefault()
-			showAdd = true
-		} else if (e.key === 'e' || e.key === 'E') {
-			e.preventDefault()
-			if (store.hasLock) showExport = true
-		} else if (e.key === '1') {
-			e.preventDefault()
-			store.setView('content')
-		} else if (e.key === '2') {
-			e.preventDefault()
-			store.setView('files')
-		} else if (e.key === '3') {
-			e.preventDefault()
-			if (store.bound) store.setView('instance')
-		} else if (e.key === '4') {
-			e.preventDefault()
-			store.setView('source')
-		} else if (e.key === 'f' || e.key === 'F') {
-			e.preventDefault()
-			if (fileFind.open?.()) return
-			showFind = true
-		}
-	}
 
 	$effect(() => {
-		document.title = store.pack ? `${store.pack.manifest.name} · packweave` : 'packweave'
+		panels.announce()
 	})
 
-	function onContextMenu(e: MouseEvent) {
-		const t = e.target as HTMLElement
-		if (t.closest('input, textarea, [contenteditable="true"], [contenteditable=""]')) return
-		e.preventDefault()
+	$effect(() => {
+		const status = git.status
+		if (!status?.isRepo) return
+		const key = [status.head, ...status.changes.map((c) => `${c.status} ${c.path}`)].join('\n')
+		if (key === statusKey) return
+		statusKey = key
+		untrack(() => void content.refreshChanges())
+	})
+
+	function onDrop(paths: string[]): void {
+		if (ws.isOpen) {
+			const usable = paths.filter((p) => /\.(jar|zip)$/i.test(p))
+			if (usable.length > 0) void dropFiles(usable)
+			return
+		}
+		void importDropped(paths)
+	}
+
+	function onkeydown(event: KeyboardEvent): void {
+		if (event.defaultPrevented || dialogs.current) return
+		handleKey(event)
 	}
 </script>
 
-<svelte:window onkeydown={onKey} oncontextmenu={onContextMenu} />
+<svelte:window {onkeydown} />
 
-<div class="flex flex-col h-screen overflow-hidden bg-bg">
-	{#if isLinux}<ResizeHandles />{/if}
-	{#if store.updateInfo}
-		<div
-			class="shrink-0 flex items-center justify-center gap-3 px-4 py-md bg-brand text-on-brand text-regular"
-		>
-			<span>packweave {store.updateInfo.version} is available.</span>
-			<div class="flex items-center gap-md">
-				<button
-					class="bg-on-brand text-brand font-semibold text-small px-2.5 py-1 rounded-sm cursor-pointer disabled:opacity-60 disabled:cursor-default"
-					disabled={store.busy}
-					onclick={() => store.installUpdate()}>Install &amp; restart</button
-				>
-				<button
-					class="bg-transparent text-on-brand text-small cursor-pointer opacity-85 hover:opacity-100"
-					onclick={() => store.dismissUpdate()}>Later</button
-				>
-			</div>
-		</div>
-	{/if}
-
-	{#if store.hasPack}
-		<Toolbar
-			onadd={() => (showAdd = true)}
-			onexport={() => (showExport = true)}
-			onsettings={() => (store.settingsOpen = true)}
-			onlink={() => (showLink = true)}
-		/>
-		<main class="flex-1 min-h-0">
-			{#if store.view === 'content'}
-				<ContentView onadd={() => (showAdd = true)} />
-			{:else if store.view === 'files'}
-				{#key filesKey}
-					<FilesView initialFile={fileToOpen} />
-				{/key}
-			{:else if store.view === 'instance'}
-				<InstanceView onlink={() => (showLink = true)} />
-			{:else if store.view === 'source'}
-				<SourceView />
-			{/if}
-		</main>
+<div class="window">
+	{#if ws.isOpen && ws.detached}
+		<TabWindow />
 	{:else}
-		<WelcomeView onnew={() => (showStart = true)} />
+		<TitleBar />
+		{#if ws.isOpen}
+			<Workbench />
+		{:else if ws.opening}
+			<div class="opening"><span class="spinner"></span></div>
+		{:else}
+			<Welcome />
+		{/if}
 	{/if}
-
-	{#if showIntro}<IntroModal onstart={() => (showStart = true)} />{/if}
-	{#if showStart}
-		<StartPackModal onclose={() => (showStart = false)} onpick={onStartPick} />
-	{/if}
-	{#if showPickForNew}
-		<InstancePicker onpick={onPickForNew} onclose={() => (showPickForNew = false)} />
-	{/if}
-	{#if showNew}
-		<NewPackModal
-			initialInstance={newInstance}
-			onclose={() => {
-				showNew = false
-				newInstance = null
-			}}
-		/>
-	{/if}
-	{#if showClone}<CloneModal onclose={() => (showClone = false)} />{/if}
-	{#if store.authPrompt}<AuthModal />{/if}
-	{#if store.deletePrompt}<DeleteConfirm />{/if}
-	{#if store.settingsOpen}<SettingsModal onclose={() => (store.settingsOpen = false)} />{/if}
-	{#if showExport}<ExportModal onclose={() => (showExport = false)} />{/if}
-	{#if showLink}
-		<InstancePicker onpick={onLink} onclose={() => (showLink = false)} />
-	{/if}
-	{#if showAdd}<AddPalette onclose={() => (showAdd = false)} />{/if}
-	{#if showPalette}
-		<CommandPalette
-			onclose={() => (showPalette = false)}
-			onadd={() => (showAdd = true)}
-			onexport={() => (showExport = true)}
-		/>
-	{/if}
-	{#if dropFiles}
-		<DropModal files={dropFiles} onclose={() => (dropFiles = null)} />
-	{/if}
-	{#if dragging}
-		<div
-			class="fixed inset-0 z-[80] grid place-items-center bg-[rgba(6,8,12,0.45)] backdrop-blur-[2px] pointer-events-none"
-		>
-			<div
-				class="flex flex-col items-center gap-2 px-10 py-8 rounded-xl border-2 border-dashed border-brand bg-bg-super-raised/90 shadow-floating"
-			>
-				<span class="text-title font-semibold text-contrast">
-					{store.hasPack ? 'Drop to add to the pack' : 'Drop a pack to import it'}
-				</span>
-				<span class="text-small text-secondary">
-					{store.hasPack
-						? 'Jars are matched to Modrinth / CurseForge automatically'
-						: '.mrpack, CurseForge .zip, or Prism / MultiMC instance'}
-				</span>
-			</div>
-		</div>
-	{/if}
-	{#if showFind}<SearchPanel {openFile} onclose={() => (showFind = false)} />{/if}
-	<ToastHost />
-	<ContextMenu />
 </div>
+
+<MenuHost />
+<DialogHost />
+<Toasts />
+{#if !isMac}
+	<ResizeEdges />
+{/if}
+{#if dragging}
+	<div class="drop">{ws.isOpen ? 'Drop to add to the pack' : 'Drop to import'}</div>
+{/if}
+
+<style>
+	.window {
+		height: 100%;
+		display: flex;
+		flex-direction: column;
+	}
+
+	.opening {
+		flex: 1;
+		display: grid;
+		place-items: center;
+	}
+
+	.drop {
+		position: fixed;
+		inset: 0;
+		z-index: 80;
+		display: grid;
+		place-items: center;
+		background: var(--scrim);
+		color: var(--text);
+		font-size: 15px;
+		font-weight: 600;
+		pointer-events: none;
+	}
+</style>

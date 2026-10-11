@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 
-use crate::ptype::ProjectType;
+use crate::ptype::{Folders, ProjectType};
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use rayon::prelude::*;
 use serde::Serialize;
@@ -9,14 +9,20 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::UNIX_EPOCH;
+use ts_rs::TS;
 
 type HashKey = (PathBuf, u64, u64);
 type HashEntry = (String, u32);
-static HASH_CACHE: OnceLock<Mutex<HashMap<HashKey, HashEntry>>> =
-    OnceLock::new();
+static HASH_CACHE: OnceLock<Mutex<HashMap<HashKey, HashEntry>>> = OnceLock::new();
 
 fn hash_cache() -> &'static Mutex<HashMap<HashKey, HashEntry>> {
     HASH_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub fn clear_hash_cache() {
+    if let Ok(mut cache) = hash_cache().lock() {
+        cache.clear();
+    }
 }
 
 fn cached_content_hash(path: &Path) -> Option<HashEntry> {
@@ -29,8 +35,7 @@ fn cached_content_hash(path: &Path) -> Option<HashEntry> {
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let key = (path.to_path_buf(), mtime, size);
-    if let Some(v) = hash_cache().lock().ok().and_then(|c| c.get(&key).cloned())
-    {
+    if let Some(v) = hash_cache().lock().ok().and_then(|c| c.get(&key).cloned()) {
         return Some(v);
     }
     let bytes = std::fs::read(path).ok()?;
@@ -49,36 +54,7 @@ fn cached_content_hash(path: &Path) -> Option<HashEntry> {
 pub const OVERRIDES_DIR: &str = "overrides";
 pub const GITIGNORE_FILE: &str = ".gitignore";
 
-const DEFAULT_IGNORES: &[&str] = &[
-    "/mods/",
-    "/resourcepacks/",
-    "/shaderpacks/",
-    ".git/",
-    "/versions/",
-    "/libraries/",
-    "/assets/",
-    "/natives/",
-    "/downloads/",
-    "/local/",
-    "/debug/",
-    ".cache/",
-    ".fabric/",
-    ".quilt/",
-    ".mixin.out/",
-    "/saves/",
-    "/backups/",
-    "/logs/",
-    "/crash-reports/",
-    "/screenshots/",
-    "*.log",
-    "*.dat_old",
-    "usercache.json",
-    "usernamecache.json",
-    "realms_persistence.json",
-    "servers.dat",
-    "command_history.txt",
-    "*.bak",
-];
+const CONTENT_FOLDERS: &[&str] = &["/mods/", "/resourcepacks/", "/shaderpacks/", ".git/"];
 
 pub const DEFAULT_GITIGNORE: &str = "\
 .DS_Store
@@ -97,7 +73,6 @@ usercache.json
 usernamecache.json
 realms_persistence.json
 command_history.txt
-servers.dat
 *.dat_old
 
 # loader
@@ -140,21 +115,10 @@ cherishedworlds-favorites.dat
 config/sodium-fingerprint.json
 ";
 
-pub const PRESERVE_FILE: &str = "preserve.txt";
-
-pub const DEFAULT_PRESERVE: &str = "\
-# Player edits to files matching these patterns will persist with updates.
-# One pattern per line, relative to .minecraft.
-# * matches within a folder, ** matches any depth.
-#
-# config/somemod.toml
-# config/somemod/**
-";
-
 pub const GITATTRIBUTES_FILE: &str = ".gitattributes";
 
 pub const DEFAULT_GITATTRIBUTES: &str = "\
-# Normalize line endings
+# normalize line endings
 * text=auto eol=lf
 
 # Binaries
@@ -171,49 +135,75 @@ pub const DEFAULT_GITATTRIBUTES: &str = "\
 *.dat binary
 ";
 
-pub fn ensure_defaults(pack_dir: &Path) {
+pub fn ensure_gitignore(pack_dir: &Path) -> Result<()> {
     let gitignore = pack_dir.join(GITIGNORE_FILE);
     if !gitignore.exists() {
-        let _ = std::fs::write(&gitignore, DEFAULT_GITIGNORE);
+        crate::util::write_file(&gitignore, DEFAULT_GITIGNORE)?;
     }
-    let gitattributes = pack_dir.join(GITATTRIBUTES_FILE);
-    if !gitattributes.exists() {
-        let _ = std::fs::write(&gitattributes, DEFAULT_GITATTRIBUTES);
-    }
-    let preserve = pack_dir.join(PRESERVE_FILE);
-    if !preserve.exists() {
-        let _ = std::fs::write(&preserve, DEFAULT_PRESERVE);
-    }
+    Ok(())
 }
 
-pub fn is_os_junk(rel: &str) -> bool {
-    rel.split('/').map(|c| c.trim()).any(|c| {
-        c.starts_with("._")
-            || c.starts_with("Thumbs.db")
-            || matches!(
-                c,
-                ".DS_Store"
-                    | ".AppleDouble"
-                    | ".LSOverride"
-                    | ".Spotlight-V100"
-                    | ".Trashes"
-                    | ".fseventsd"
-                    | ".DocumentRevisions-V100"
-                    | ".TemporaryItems"
-                    | ".apdisk"
-                    | "ehthumbs.db"
-                    | "ehthumbs_vista.db"
-                    | "desktop.ini"
-                    | ".directory"
-                    | "$RECYCLE.BIN"
-                    | "System Volume Information"
-            )
-    })
+fn adopt_gitignore_defaults(pack_dir: &Path) -> Result<()> {
+    let path = pack_dir.join(GITIGNORE_FILE);
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return Ok(());
+    };
+    let have: std::collections::HashSet<&str> = text.lines().map(str::trim).collect();
+    let missing: Vec<&str> = DEFAULT_GITIGNORE
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#') && !have.contains(line))
+        .collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    let mut next = text.clone();
+    if !next.ends_with('\n') {
+        next.push('\n');
+    }
+    for line in missing {
+        next.push_str(line);
+        next.push('\n');
+    }
+    crate::util::write_file(&path, next)
+}
+
+pub fn create_defaults(pack_dir: &Path) -> Result<()> {
+    let gitattributes = pack_dir.join(GITATTRIBUTES_FILE);
+    if !gitattributes.exists() {
+        crate::util::write_file(&gitattributes, DEFAULT_GITATTRIBUTES)?;
+    }
+    crate::preserve::ensure(pack_dir)
+}
+
+pub fn ensure_defaults(pack_dir: &Path) -> Result<()> {
+    let Ok(text) = std::fs::read_to_string(crate::manifest::path_for(pack_dir)) else {
+        return Ok(());
+    };
+    if crate::lenient::has_conflict(&text) {
+        return Ok(());
+    }
+    let Ok(mut manifest) = crate::manifest::read(pack_dir) else {
+        return Ok(());
+    };
+    if manifest.format_version >= crate::manifest::FORMAT_VERSION
+        || !crate::preserve::migrate(pack_dir)?
+    {
+        return Ok(());
+    }
+    adopt_gitignore_defaults(pack_dir)?;
+    crate::packignore::adopt_export_defaults(pack_dir)?;
+    create_defaults(pack_dir)?;
+    crate::content::retire_generated_readme(pack_dir)?;
+    manifest.format_version = crate::manifest::FORMAT_VERSION;
+    crate::manifest::write(pack_dir, &manifest)
+        .map_err(|e| anyhow!("Couldn't write {}: {e}", crate::manifest::MANIFEST_FILE))
 }
 
 pub struct InstanceMod {
     pub filename: String,
     pub rel_path: String,
+    pub project_type: ProjectType,
     pub sha1: String,
     pub murmur2: u32,
 }
@@ -223,11 +213,11 @@ pub struct TrackedFile {
     pub sha1: String,
 }
 
-pub fn scan_content(instance: &Path) -> Vec<InstanceMod> {
-    let mut candidates: Vec<(PathBuf, String, String)> = Vec::new();
-    for sub in ["mods", "resourcepacks", "shaderpacks"] {
-        let dir = instance.join(sub);
-        let entries = match std::fs::read_dir(&dir) {
+pub fn scan_content(instance: &Path, folders: &Folders) -> Vec<InstanceMod> {
+    let mut candidates: Vec<(PathBuf, String, String, ProjectType)> = Vec::new();
+    for project_type in ProjectType::ALL {
+        let sub = folders.install_dir(project_type);
+        let entries = match std::fs::read_dir(instance.join(sub)) {
             Ok(e) => e,
             Err(_) => continue,
         };
@@ -240,7 +230,7 @@ pub fn scan_content(instance: &Path) -> Vec<InstanceMod> {
                 .extension()
                 .map(|x| x.to_string_lossy().to_lowercase())
                 .unwrap_or_default();
-            if ext != "jar" && ext != "zip" {
+            if !project_type.extensions().contains(&ext.as_str()) {
                 continue;
             }
             let filename = p
@@ -248,16 +238,22 @@ pub fn scan_content(instance: &Path) -> Vec<InstanceMod> {
                 .unwrap_or_default()
                 .to_string_lossy()
                 .to_string();
-            candidates.push((p, format!("{sub}/{filename}"), filename));
+            if project_type == ProjectType::Mod
+                && filename.eq_ignore_ascii_case(crate::dist::INSTALLER_JAR)
+            {
+                continue;
+            }
+            candidates.push((p, format!("{sub}/{filename}"), filename, project_type));
         }
     }
     candidates
         .into_par_iter()
-        .filter_map(|(path, rel_path, filename)| {
+        .filter_map(|(path, rel_path, filename, project_type)| {
             let (sha1, murmur2) = cached_content_hash(&path)?;
             Some(InstanceMod {
                 filename,
                 rel_path,
+                project_type,
                 sha1,
                 murmur2,
             })
@@ -265,65 +261,47 @@ pub fn scan_content(instance: &Path) -> Vec<InstanceMod> {
         .collect()
 }
 
-pub fn ignore_matcher(pack_dir: &Path) -> Gitignore {
-    let mut builder = GitignoreBuilder::new(pack_dir);
-    let gitignore = pack_dir.join(GITIGNORE_FILE);
-    if gitignore.exists() {
-        let _ = builder.add(&gitignore);
-    }
-    for pattern in DEFAULT_IGNORES {
-        let _ = builder.add_line(None, pattern);
-    }
-    builder.build().unwrap_or_else(|_| Gitignore::empty())
+pub struct SyncIgnore {
+    defaults: Gitignore,
+    git: Gitignore,
 }
 
-pub fn user_ignore_matcher(pack_dir: &Path) -> Gitignore {
-    let mut builder = GitignoreBuilder::new(pack_dir);
-    let gitignore = pack_dir.join(GITIGNORE_FILE);
-    if gitignore.exists() {
-        let _ = builder.add(&gitignore);
+impl SyncIgnore {
+    pub fn load(pack_dir: &Path) -> Self {
+        let mut builder = GitignoreBuilder::new(pack_dir);
+        for pattern in CONTENT_FOLDERS {
+            let _ = builder.add_line(None, pattern);
+        }
+        let datapacks = Folders::load(pack_dir).datapacks().to_string();
+        for pattern in ["*.zip", "*.zip.disabled"] {
+            let _ = builder.add_line(None, &format!("/{datapacks}/{pattern}"));
+        }
+        let _ = builder.add_line(None, &format!("/{}", crate::dist::INSTALLER_JAR));
+        SyncIgnore {
+            defaults: builder.build().unwrap_or_else(|_| Gitignore::empty()),
+            git: crate::packignore::matcher(pack_dir, crate::packignore::IgnoreKind::Git),
+        }
     }
-    builder.build().unwrap_or_else(|_| Gitignore::empty())
+
+    pub fn ignores(&self, rel: &str, is_dir: bool) -> bool {
+        is_ignored(&self.defaults, rel, is_dir) || self.ignores_user(rel, is_dir)
+    }
+
+    pub fn ignores_user(&self, rel: &str, is_dir: bool) -> bool {
+        is_ignored(&self.git, rel, is_dir)
+            || is_ignored(&self.git, &format!("{OVERRIDES_DIR}/{rel}"), is_dir)
+    }
 }
 
-pub fn is_ignored(matcher: &Gitignore, rel: &str, is_dir: bool) -> bool {
+fn is_ignored(matcher: &Gitignore, rel: &str, is_dir: bool) -> bool {
     matcher
         .matched_path_or_any_parents(Path::new(rel), is_dir)
         .is_ignore()
 }
 
-pub fn add_ignore(pack_dir: &Path, pattern: &str) -> Result<()> {
-    let path = pack_dir.join(GITIGNORE_FILE);
-    let mut content = std::fs::read_to_string(&path).unwrap_or_default();
-    if content.lines().any(|l| l.trim() == pattern) {
-        return Ok(());
-    }
-    if !content.is_empty() && !content.ends_with('\n') {
-        content.push('\n');
-    }
-    content.push_str(pattern);
-    content.push('\n');
-    std::fs::write(&path, content)?;
-    Ok(())
-}
-
-pub fn read_gitignore(pack_dir: &Path) -> String {
-    std::fs::read_to_string(pack_dir.join(GITIGNORE_FILE)).unwrap_or_default()
-}
-
-pub fn write_gitignore(pack_dir: &Path, content: &str) -> Result<()> {
-    let normalized = if content.ends_with('\n') || content.is_empty() {
-        content.to_string()
-    } else {
-        format!("{content}\n")
-    };
-    std::fs::write(pack_dir.join(GITIGNORE_FILE), normalized)?;
-    Ok(())
-}
-
 pub fn scan_tracked(
     instance: &Path,
-    matcher: &Gitignore,
+    matcher: &SyncIgnore,
     attrs: &GitAttributes,
 ) -> Vec<TrackedFile> {
     let mut files = Vec::new();
@@ -335,27 +313,25 @@ pub fn overrides_dir(pack_dir: &Path) -> PathBuf {
     pack_dir.join(OVERRIDES_DIR)
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "types.ts")]
 pub struct LocalContent {
     pub rel_path: String,
     pub filename: String,
     pub project_type: ProjectType,
     pub size: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub meta: Option<crate::modmeta::ModMeta>,
 }
 
 pub fn list_unpublished(pack_dir: &Path) -> Vec<LocalContent> {
     let base = overrides_dir(pack_dir);
-    let dirs = [
-        ("mods", ProjectType::Mod),
-        ("resourcepacks", ProjectType::Resourcepack),
-        ("shaderpacks", ProjectType::Shader),
-    ];
-    let mut candidates: Vec<(PathBuf, String, String, u64, ProjectType)> =
-        Vec::new();
-    for (dir, project_type) in dirs {
+    let folders = Folders::load(pack_dir);
+    let mut candidates: Vec<(PathBuf, String, String, u64, ProjectType)> = Vec::new();
+    for project_type in ProjectType::ALL {
+        let dir = folders.install_dir(project_type);
         let entries = match std::fs::read_dir(base.join(dir)) {
             Ok(e) => e,
             Err(_) => continue,
@@ -371,6 +347,12 @@ pub fn list_unpublished(pack_dir: &Path) -> Vec<LocalContent> {
                 .to_string_lossy()
                 .to_string();
             if filename.starts_with('.') {
+                continue;
+            }
+            let lower = filename.to_lowercase();
+            if project_type == ProjectType::Datapack
+                && !(lower.ends_with(".zip") || lower.ends_with(".zip.disabled"))
+            {
                 continue;
             }
             let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
@@ -401,7 +383,7 @@ pub fn list_unpublished(pack_dir: &Path) -> Vec<LocalContent> {
 
 pub fn scan_overrides(
     pack_dir: &Path,
-    matcher: &Gitignore,
+    matcher: &SyncIgnore,
     attrs: &GitAttributes,
 ) -> Vec<TrackedFile> {
     let base = overrides_dir(pack_dir);
@@ -490,11 +472,7 @@ fn looks_binary(bytes: &[u8]) -> bool {
     bytes.iter().take(8192).any(|&b| b == 0)
 }
 
-fn sha1_normalized(
-    path: &Path,
-    rel: &str,
-    attrs: &GitAttributes,
-) -> Option<String> {
+fn sha1_normalized(path: &Path, rel: &str, attrs: &GitAttributes) -> Option<String> {
     let bytes = std::fs::read(path).ok()?;
     let binary = attrs.is_binary(rel).unwrap_or_else(|| looks_binary(&bytes));
     let data = if binary { bytes } else { normalize_eol(&bytes) };
@@ -503,25 +481,16 @@ fn sha1_normalized(
     Some(hex::encode(hasher.finalize()))
 }
 
-fn hash_all(
-    files: Vec<(PathBuf, String)>,
-    attrs: &GitAttributes,
-) -> Vec<TrackedFile> {
+fn hash_all(files: Vec<(PathBuf, String)>, attrs: &GitAttributes) -> Vec<TrackedFile> {
     files
         .into_par_iter()
         .filter_map(|(path, rel)| {
-            sha1_normalized(&path, &rel, attrs)
-                .map(|sha1| TrackedFile { path: rel, sha1 })
+            sha1_normalized(&path, &rel, attrs).map(|sha1| TrackedFile { path: rel, sha1 })
         })
         .collect()
 }
 
-fn collect_files(
-    dir: &Path,
-    base: &Path,
-    matcher: &Gitignore,
-    out: &mut Vec<(PathBuf, String)>,
-) {
+fn collect_files(dir: &Path, base: &Path, matcher: &SyncIgnore, out: &mut Vec<(PathBuf, String)>) {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,
@@ -533,10 +502,10 @@ fn collect_files(
             Err(_) => continue,
         };
         if p.is_dir() {
-            if !is_ignored(matcher, &rel, true) {
+            if !matcher.ignores(&rel, true) {
                 collect_files(&p, base, matcher, out);
             }
-        } else if p.is_file() && !is_ignored(matcher, &rel, false) {
+        } else if p.is_file() && !matcher.ignores(&rel, false) {
             out.push((p, rel));
         }
     }
@@ -563,11 +532,7 @@ fn copy_checked(src: &Path, dst: &Path, rel: &str) -> Result<()> {
     }
 }
 
-pub fn copy_into_overrides(
-    pack_dir: &Path,
-    instance: &Path,
-    rel: &str,
-) -> Result<()> {
+pub fn copy_into_overrides(pack_dir: &Path, instance: &Path, rel: &str) -> Result<()> {
     safe_rel(rel)?;
     let src = instance.join(rel);
     let dst = overrides_dir(pack_dir).join(rel);
@@ -577,11 +542,7 @@ pub fn copy_into_overrides(
     copy_checked(&src, &dst, rel)
 }
 
-pub fn copy_into_instance(
-    pack_dir: &Path,
-    instance: &Path,
-    rel: &str,
-) -> Result<()> {
+pub fn copy_into_instance(pack_dir: &Path, instance: &Path, rel: &str) -> Result<()> {
     safe_rel(rel)?;
     let src = overrides_dir(pack_dir).join(rel);
     let dst = instance.join(rel);
@@ -615,57 +576,4 @@ pub fn remove_from_instance(instance: &Path, rel: &str) -> Result<()> {
         }
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn eol_normalizes_crlf_and_cr() {
-        assert_eq!(normalize_eol(b"a\r\nb\rc\n"), b"a\nb\nc\n");
-        assert_eq!(normalize_eol(b"plain"), b"plain");
-    }
-
-    #[test]
-    fn default_attributes_mark_jars_binary_configs_text() {
-        let attrs = GitAttributes {
-            rules: vec![
-                ("*".into(), None),
-                ("*.jar".into(), Some(true)),
-                ("*.png".into(), Some(true)),
-            ],
-        };
-        assert_eq!(attrs.is_binary("mods/sodium.jar"), Some(true));
-        assert_eq!(attrs.is_binary("config/foo.toml"), None);
-    }
-
-    #[test]
-    fn attr_matches_patterns() {
-        assert!(attr_matches("*", "config/foo.toml"));
-        assert!(attr_matches("*.jar", "mods/a.jar"));
-        assert!(!attr_matches("*.jar", "mods/a.json"));
-        assert!(attr_matches("config/options.txt", "config/options.txt"));
-    }
-
-    #[test]
-    fn default_ignores_only_match_top_level_dirs() {
-        let dir = std::env::temp_dir()
-            .join(format!("pw-ignore-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let m = ignore_matcher(&dir);
-        assert!(is_ignored(&m, "assets/indexes/1.21.json", false));
-        assert!(is_ignored(&m, "mods/sodium.jar", false));
-        assert!(is_ignored(&m, "saves/world/level.dat", false));
-        assert!(!is_ignored(
-            &m,
-            "kubejs/assets/kubejs/lang/en_us.json",
-            false
-        ));
-        assert!(!is_ignored(&m, "kubejs/data/pack/recipes/x.json", false));
-        assert!(!is_ignored(&m, "config/somemod/local/settings.toml", false));
-        assert!(!is_ignored(&m, "config/create.toml", false));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
 }

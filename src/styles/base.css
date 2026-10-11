@@ -1,0 +1,198 @@
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+}
+
+html,
+body {
+	height: 100%;
+	margin: 0;
+	overflow: hidden;
+}
+
+body {
+	background: var(--doc);
+	color: var(--text);
+	font-family: var(--font-ui);
+	font-size: 13px;
+	line-height: 1.38;
+	-webkit-font-smoothing: antialiased;
+	user-select: none;
+	-webkit-user-select: none;
+	cursor: default;
+}
+
+#app {
+	height: 100%;
+}
+
+button,
+input,
+textarea,
+select {
+	font: inherit;
+	color: inherit;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	text-align: inherit;
+	letter-spacing: inherit;
+	line-height: inherit;
+}
+
+button {
+	cursor: default;
+}
+
+button:disabled {
+	opacity: 0.42;
+}
+
+input,
+textarea,
+[contenteditable] {
+	user-select: text;
+	-webkit-user-select: text;
+}
+
+input::placeholder,
+textarea::placeholder {
+	color: var(--text);
+	opacity: 0.5;
+	font-style: italic;
+}
+
+.prefilled::placeholder {
+	font-style: normal;
+}
+
+:focus {
+	outline: none;
+}
+
+:focus-visible {
+	outline: 2px solid var(--focus);
+	outline-offset: 2px;
+}
+
+input[type='checkbox'],
+input[type='radio'] {
+	width: 14px;
+	height: 14px;
+	flex: none;
+	accent-color: var(--main);
+}
+
+h1,
+h2,
+h3,
+h4,
+p {
+	margin: 0;
+	font-size: inherit;
+	font-weight: inherit;
+}
+
+a {
+	color: var(--blue);
+	text-decoration: none;
+}
+
+a:hover {
+	text-decoration: underline;
+}
+
+::selection {
+	background: var(--blue-soft);
+}
+
+::-webkit-scrollbar {
+	width: 10px;
+	height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+	background: var(--fill);
+	border: 2px solid transparent;
+	background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+	background-color: var(--selected);
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+	background: transparent;
+}
+
+.mono {
+	font-family: var(--font-mono);
+	font-size: 12px;
+	font-variant-ligatures: none;
+}
+
+.ellipsis {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	min-width: 0;
+}
+
+.spacer {
+	flex: 1;
+}
+
+.added {
+	color: var(--green);
+}
+
+.changed {
+	color: var(--yellow);
+}
+
+.removed {
+	color: var(--red);
+}
+
+.info {
+	color: var(--blue);
+}
+
+.title-display {
+	font-size: 28px;
+	line-height: 34px;
+	font-weight: 600;
+	letter-spacing: -0.02em;
+}
+
+.title-doc {
+	font-size: 20px;
+	line-height: 26px;
+	font-weight: 600;
+	letter-spacing: -0.01em;
+}
+
+.title-heading {
+	font-size: 15px;
+	line-height: 20px;
+	font-weight: 600;
+}
+
+.small {
+	font-size: 12px;
+}
+
+.hint {
+	color: var(--grey);
+}
+
+.strong {
+	font-weight: 600;
+}
+
+.medium {
+	font-weight: 500;
+}

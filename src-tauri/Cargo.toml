@@ -1,6 +1,6 @@
 [package]
 name = "packweave"
-version = "1.0.0"
+version = "2.0.0"
 description = "A git-native desktop builder for Minecraft modpacks across Modrinth and CurseForge"
 authors = ["Tazer"]
 edition = "2021"
@@ -31,10 +31,16 @@ rayon = "1"
 base64 = "0.22"
 flate2 = "1"
 toml = "0.8"
+ts-rs = { version = "12.0.1", features = ["no-serde-warnings"] }
 tokio = { version = "1", features = ["sync", "time"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
+sysinfo = { version = "0.39", default-features = false, features = ["system"] }
+regex = "1"
+globset = "0.4"
+trash = "5.2.9"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
 keyring = { version = "3", features = ["apple-native"] }
 objc2 = "0.6"
 objc2-app-kit = "0.3"
@@ -45,9 +51,6 @@ keyring = { version = "3", features = ["windows-native"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring = { version = "3", features = ["sync-secret-service"] }
-
-[dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 [profile.dev]
 incremental = true

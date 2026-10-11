@@ -22,9 +22,7 @@ fn read_fallback() -> serde_json::Map<String, serde_json::Value> {
         .unwrap_or_default()
 }
 
-fn write_fallback(
-    map: &serde_json::Map<String, serde_json::Value>,
-) -> Result<()> {
+fn write_fallback(map: &serde_json::Map<String, serde_json::Value>) -> Result<()> {
     let Some(path) = fallback_file() else {
         anyhow::bail!("secret storage is unavailable");
     };
@@ -32,18 +30,30 @@ fn write_fallback(
         std::fs::create_dir_all(parent)?;
     }
     if map.is_empty() {
-        let _ = std::fs::remove_file(&path);
+        crate::util::delete_file(&path)?;
         return Ok(());
     }
-    std::fs::write(&path, serde_json::to_string(map)?)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(
-            &path,
-            std::fs::Permissions::from_mode(0o600),
-        );
-    }
+    write_private(&path, &serde_json::to_string(map)?)
+}
+
+#[cfg(unix)]
+fn write_private(path: &std::path::Path, text: &str) -> Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    file.write_all(text.as_bytes())?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn write_private(path: &std::path::Path, text: &str) -> Result<()> {
+    std::fs::write(path, text)?;
     Ok(())
 }
 
@@ -60,25 +70,19 @@ fn fallback_set(key: &str, value: &str) -> Result<()> {
     write_fallback(&map)
 }
 
-fn fallback_delete(key: &str) {
+fn fallback_delete(key: &str) -> Result<()> {
     let mut map = read_fallback();
     if map.remove(key).is_some() {
-        let _ = write_fallback(&map);
+        write_fallback(&map)?;
     }
+    Ok(())
 }
 
 pub fn set(key: &str, value: &str) -> Result<()> {
-    match keyring::Entry::new(SERVICE, key)
-        .and_then(|entry| entry.set_password(value))
-    {
-        Ok(()) => {
-            fallback_delete(key);
-            Ok(())
-        }
+    match keyring::Entry::new(SERVICE, key).and_then(|entry| entry.set_password(value)) {
+        Ok(()) => fallback_delete(key),
         Err(keyring_err) => fallback_set(key, value).map_err(|_| {
-            anyhow::anyhow!(
-                "couldn't store the token in the system keychain: {keyring_err}"
-            )
+            anyhow::anyhow!("couldn't store the token in the system keychain: {keyring_err}")
         }),
     }
 }
@@ -92,8 +96,10 @@ pub fn get(key: &str) -> Option<String> {
 
 pub fn delete(key: &str) -> Result<()> {
     if let Ok(entry) = keyring::Entry::new(SERVICE, key) {
-        let _ = entry.delete_credential();
+        match entry.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => {}
+            Err(e) => return Err(e.into()),
+        }
     }
-    fallback_delete(key);
-    Ok(())
+    fallback_delete(key)
 }

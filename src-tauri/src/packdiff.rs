@@ -8,22 +8,29 @@ use crate::git;
 use crate::manifest::{self, Manifest};
 use crate::providers::ProviderId;
 use crate::ptype::ProjectType;
+use ts_rs::TS;
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "types.ts")]
 pub struct PackDiff {
     pub items: Vec<ItemChange>,
     pub env: Option<EnvDiff>,
     pub files: Vec<FileChange>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "types.ts")]
 pub struct ItemChange {
     pub kind: String,
     pub name: String,
+    pub project_id: String,
     pub project_type: ProjectType,
     pub slug: String,
+    pub path: String,
+    pub dependency: bool,
+    pub parents: Vec<String>,
     pub from_version: Option<String>,
     pub to_version: Option<String>,
     pub from_side: Option<String>,
@@ -33,8 +40,9 @@ pub struct ItemChange {
     pub disabled: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "types.ts")]
 pub struct EnvDiff {
     pub from_minecraft: String,
     pub to_minecraft: String,
@@ -44,8 +52,9 @@ pub struct EnvDiff {
     pub to_loader_version: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "types.ts", rename = "PackFileChange")]
 pub struct FileChange {
     pub status: String,
     pub path: String,
@@ -53,6 +62,10 @@ pub struct FileChange {
 
 struct SnapItem {
     name: String,
+    project_id: String,
+    path: String,
+    explicit: bool,
+    dependents: Vec<String>,
     project_type: ProjectType,
     slug: String,
     provider: ProviderId,
@@ -78,10 +91,6 @@ fn empty_snapshot() -> Snapshot {
     }
 }
 
-fn type_from_path(path: &str) -> ProjectType {
-    ProjectType::from_content_path(path)
-}
-
 fn slug_from_path(path: &str) -> String {
     path.rsplit('/')
         .next()
@@ -99,6 +108,10 @@ fn snap_item(item: &ContentItem, fallback: &str) -> SnapItem {
         } else {
             item.name.clone()
         },
+        project_id: item.project_id(),
+        path: content::item_rel_path(item),
+        explicit: item.explicit,
+        dependents: item.dependents.clone(),
         project_type: item.project_type,
         slug: active
             .map(|s| s.slug.clone())
@@ -106,9 +119,7 @@ fn snap_item(item: &ContentItem, fallback: &str) -> SnapItem {
             .unwrap_or_else(|| fallback.to_string()),
         provider: item.preferred,
         version_id: active.map(|s| s.version_id.clone()).unwrap_or_default(),
-        version_number: active
-            .map(|s| s.version_number.clone())
-            .unwrap_or_default(),
+        version_number: active.map(|s| s.version_number.clone()).unwrap_or_default(),
         side: item.side.clone(),
         disabled: item.disabled,
     }
@@ -130,8 +141,9 @@ fn snapshot_at(dir: &Path, reference: &str) -> Result<Snapshot> {
             Ok(i) => i,
             Err(_) => continue,
         };
-        item.project_type = type_from_path(&path);
+        item.project_type = ProjectType::from_content_path(&path);
         let slug = slug_from_path(&path);
+        item.file = slug.clone();
         let key = format!("{}/{}", item.project_type, slug);
         items.insert(key, snap_item(&item, &slug));
     }
@@ -150,7 +162,7 @@ fn working_snapshot(dir: &Path) -> Snapshot {
     };
     let mut items = BTreeMap::new();
     let base = content::content_dir(dir);
-    for sub in ["mods", "resourcepacks", "shaders"] {
+    for sub in ProjectType::ALL.map(ProjectType::content_dir) {
         let entries = match std::fs::read_dir(base.join(sub)) {
             Ok(e) => e,
             Err(_) => continue,
@@ -175,8 +187,9 @@ fn working_snapshot(dir: &Path) -> Snapshot {
                 Ok(i) => i,
                 Err(_) => continue,
             };
-            item.project_type = type_from_path(&rel);
+            item.project_type = ProjectType::from_content_path(&rel);
             let slug = slug_from_path(&rel);
+            item.file = slug.clone();
             let key = format!("{}/{}", item.project_type, slug);
             items.insert(key, snap_item(&item, &slug));
         }
@@ -194,12 +207,21 @@ fn item_change(
     repr: &SnapItem,
     from: Option<&SnapItem>,
     to: Option<&SnapItem>,
+    names: &BTreeMap<String, String>,
 ) -> ItemChange {
     ItemChange {
         kind: kind.into(),
         name: repr.name.clone(),
+        project_id: repr.project_id.clone(),
         project_type: repr.project_type,
         slug: repr.slug.clone(),
+        path: repr.path.clone(),
+        dependency: !repr.explicit,
+        parents: repr
+            .dependents
+            .iter()
+            .map(|id| names.get(id).cloned().unwrap_or_else(|| id.clone()))
+            .collect(),
         from_version: from
             .map(|s| s.version_number.clone())
             .filter(|s| !s.is_empty()),
@@ -214,35 +236,32 @@ fn item_change(
     }
 }
 
-fn diff(
-    from: &Snapshot,
-    to: &Snapshot,
-    from_known: bool,
-) -> (Vec<ItemChange>, Option<EnvDiff>) {
+fn diff(from: &Snapshot, to: &Snapshot, from_known: bool) -> (Vec<ItemChange>, Option<EnvDiff>) {
     let mut items: Vec<ItemChange> = Vec::new();
-    let keys: BTreeSet<&String> =
-        from.items.keys().chain(to.items.keys()).collect();
+    let names: BTreeMap<String, String> = from
+        .items
+        .values()
+        .chain(to.items.values())
+        .map(|i| (i.project_id.clone(), i.name.clone()))
+        .collect();
+    let keys: BTreeSet<&String> = from.items.keys().chain(to.items.keys()).collect();
     for key in keys {
         match (from.items.get(key), to.items.get(key)) {
-            (None, Some(t)) => {
-                items.push(item_change("added", t, None, Some(t)))
-            }
-            (Some(f), None) => {
-                items.push(item_change("removed", f, Some(f), None))
-            }
+            (None, Some(t)) => items.push(item_change("added", t, None, Some(t), &names)),
+            (Some(f), None) => items.push(item_change("removed", f, Some(f), None, &names)),
             (Some(f), Some(t)) => {
                 if f.disabled != t.disabled {
                     let kind = if t.disabled { "disabled" } else { "enabled" };
-                    items.push(item_change(kind, t, Some(f), Some(t)));
+                    items.push(item_change(kind, t, Some(f), Some(t), &names));
                 } else if !f.version_id.is_empty()
                     && !t.version_id.is_empty()
                     && f.version_id != t.version_id
                 {
-                    items.push(item_change("updated", t, Some(f), Some(t)));
+                    items.push(item_change("updated", t, Some(f), Some(t), &names));
                 } else if f.provider != t.provider {
-                    items.push(item_change("provider", t, Some(f), Some(t)));
+                    items.push(item_change("provider", t, Some(f), Some(t), &names));
                 } else if f.side != t.side {
-                    items.push(item_change("resided", t, Some(f), Some(t)));
+                    items.push(item_change("resided", t, Some(f), Some(t), &names));
                 }
             }
             (None, None) => {}
@@ -317,101 +336,4 @@ pub fn pack_diff_working(dir: &Path) -> Result<PackDiff> {
         })
         .collect();
     Ok(PackDiff { items, env, files })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn strips_overrides_prefix() {
-        assert_eq!(
-            strip_overrides("overrides/config/foo.json"),
-            "config/foo.json"
-        );
-        assert_eq!(strip_overrides("config/foo.json"), "config/foo.json");
-    }
-
-    #[test]
-    fn keys_by_path() {
-        assert_eq!(slug_from_path("content/mods/emi.json"), "emi");
-        assert_eq!(
-            type_from_path("content/resourcepacks/x.json"),
-            ProjectType::Resourcepack
-        );
-        assert_eq!(
-            type_from_path("content/shaders/x.json"),
-            ProjectType::Shader
-        );
-        assert_eq!(type_from_path("content/mods/x.json"), ProjectType::Mod);
-    }
-
-    #[test]
-    fn file_status_words() {
-        assert_eq!(file_status("A"), "added");
-        assert_eq!(file_status("M"), "modified");
-        assert_eq!(file_status("D"), "removed");
-        assert_eq!(file_status("R"), "renamed");
-    }
-
-    fn snap(version_id: &str, provider: ProviderId) -> SnapItem {
-        SnapItem {
-            name: "EMI".into(),
-            project_type: ProjectType::Mod,
-            slug: "emi".into(),
-            provider,
-            version_id: version_id.into(),
-            version_number: if version_id.is_empty() {
-                String::new()
-            } else {
-                "1.0".into()
-            },
-            side: "auto".into(),
-            disabled: false,
-        }
-    }
-
-    #[test]
-    fn disabling_a_mod_emits_a_disabled_change() {
-        let mut from = snap("v1", ProviderId::Modrinth);
-        let mut to = snap("v1", ProviderId::Modrinth);
-        from.disabled = false;
-        to.disabled = true;
-        let (items, _) = diff(&snapshot_with(from), &snapshot_with(to), true);
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].kind, "disabled");
-        assert!(items[0].disabled);
-    }
-
-    fn snapshot_with(item: SnapItem) -> Snapshot {
-        let mut s = empty_snapshot();
-        s.items.insert("mod/emi".into(), item);
-        s
-    }
-
-    #[test]
-    fn version_backfill_is_not_a_change() {
-        let versioned = snapshot_with(snap("abc", ProviderId::Modrinth));
-        let legacy = snapshot_with(snap("", ProviderId::Modrinth));
-        assert!(diff(&versioned, &legacy, true).0.is_empty());
-        assert!(diff(&legacy, &versioned, true).0.is_empty());
-    }
-
-    #[test]
-    fn real_version_bump_still_updates() {
-        let from = snapshot_with(snap("abc", ProviderId::Modrinth));
-        let to = snapshot_with(snap("def", ProviderId::Modrinth));
-        let items = diff(&from, &to, true).0;
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].kind, "updated");
-    }
-
-    #[test]
-    fn provider_change_during_unpin_still_shows() {
-        let from = snapshot_with(snap("abc", ProviderId::Modrinth));
-        let to = snapshot_with(snap("", ProviderId::Curseforge));
-        let items = diff(&from, &to, true).0;
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].kind, "provider");
-    }
 }

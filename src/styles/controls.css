@@ -1,0 +1,422 @@
+.btn {
+	height: var(--row);
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	padding: 0 14px;
+	background: var(--fill);
+	color: var(--text);
+	font-size: 12.5px;
+	font-weight: 500;
+	white-space: nowrap;
+	flex: none;
+}
+
+.btn:not(:disabled):hover {
+	background: var(--selected);
+}
+
+.btn.primary {
+	background: var(--main);
+	color: var(--on-main);
+	font-weight: 600;
+}
+
+.btn.primary:not(:disabled):hover {
+	opacity: 0.88;
+}
+
+.btn.quiet {
+	background: var(--band);
+}
+
+.btn.danger {
+	color: var(--red);
+}
+
+.btn.danger-fill {
+	background: var(--red-fill);
+	color: var(--on-red);
+	font-weight: 600;
+}
+
+.btn.small {
+	height: 24px;
+	padding: 0 10px;
+	font-size: 12px;
+}
+
+.btn.large {
+	height: 34px;
+	padding: 0 18px;
+	font-size: 13px;
+}
+
+.btn .keys {
+	font: 500 10.5px var(--font-mono);
+}
+
+.icon-btn {
+	position: relative;
+	width: var(--row);
+	height: var(--row);
+	display: inline-grid;
+	place-items: center;
+	color: var(--text);
+	flex: none;
+}
+
+.icon-btn:not(:disabled):hover {
+	background: var(--band);
+}
+
+.icon-btn.small {
+	width: 24px;
+	height: 24px;
+}
+
+.icon-btn.on {
+	background: var(--selected);
+}
+
+.field {
+	height: var(--row);
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 0 10px;
+	background: var(--band);
+	box-shadow: inset 0 -1px 0 var(--field-line);
+	color: var(--text);
+	font-size: 13px;
+	white-space: nowrap;
+	min-width: 0;
+}
+
+.field input {
+	flex: 1;
+	min-width: 0;
+	height: 100%;
+}
+
+.field:focus-within {
+	outline: none;
+	box-shadow: inset 0 -2px 0 var(--focus);
+}
+
+.field input:focus-visible,
+input.field:focus-visible,
+textarea.field-area:focus-visible {
+	outline: none;
+}
+
+.field.error {
+	box-shadow: inset 0 -2px 0 var(--red);
+}
+
+.field.disabled {
+	opacity: 0.5;
+}
+
+input.field,
+textarea.field-area {
+	width: 100%;
+}
+
+textarea.field-area {
+	display: block;
+	background: var(--band);
+	box-shadow: inset 0 -1px 0 var(--field-line);
+	padding: 8px 10px;
+	font-size: 13px;
+	line-height: 1.45;
+	resize: none;
+}
+
+textarea.field-area:focus-visible {
+	box-shadow: inset 0 -2px 0 var(--focus);
+}
+
+.field-error {
+	font-size: 12px;
+	color: var(--red);
+}
+
+.label {
+	font-size: 12.5px;
+	font-weight: 600;
+}
+
+.form-field {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	min-width: 0;
+}
+
+input.switch {
+	--knob: var(--grey);
+	--x: 2px;
+	appearance: none;
+	-webkit-appearance: none;
+	width: 30px;
+	height: 16px;
+	flex: none;
+	margin: 0;
+	border-radius: 5px;
+	background-color: var(--raised-3);
+	background-image:
+		linear-gradient(var(--knob), var(--knob)), linear-gradient(var(--knob), var(--knob)),
+		radial-gradient(circle, var(--knob) 2.4px, transparent 3px),
+		radial-gradient(circle, var(--knob) 2.4px, transparent 3px),
+		radial-gradient(circle, var(--knob) 2.4px, transparent 3px),
+		radial-gradient(circle, var(--knob) 2.4px, transparent 3px);
+	background-size:
+		6px 12px,
+		12px 6px,
+		6px 6px,
+		6px 6px,
+		6px 6px,
+		6px 6px;
+	background-position:
+		calc(var(--x) + 3px) 2px,
+		var(--x) 5px,
+		var(--x) 2px,
+		calc(var(--x) + 6px) 2px,
+		var(--x) 8px,
+		calc(var(--x) + 6px) 8px;
+	background-repeat: no-repeat;
+}
+
+input.switch:checked {
+	--knob: var(--on-main);
+	--x: 16px;
+	background-color: var(--main);
+}
+
+input.switch:disabled {
+	opacity: 0.42;
+}
+
+.check {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 13px;
+	white-space: nowrap;
+}
+
+.seg {
+	display: inline-flex;
+	align-items: stretch;
+	background: var(--band);
+	flex: none;
+}
+
+.seg > button {
+	min-height: var(--row);
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 0 12px;
+	font-size: 12.5px;
+	white-space: nowrap;
+}
+
+.seg > button:not(.on):hover {
+	background: var(--hover);
+}
+
+.seg > button.on {
+	background: var(--selected);
+	font-weight: 600;
+}
+
+.seg.small > button {
+	min-height: 24px;
+	padding: 0 10px;
+	font-size: 12px;
+}
+
+.chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-height: 24px;
+	padding: 0 10px;
+	font-size: 12.5px;
+	white-space: nowrap;
+	flex: none;
+}
+
+.chip:not(.on):hover {
+	background: var(--hover);
+}
+
+.chip.on {
+	background: var(--selected);
+	font-weight: 600;
+}
+
+.chip .count-text {
+	font: 500 11px var(--font-mono);
+}
+
+.kbd {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 20px;
+	min-height: 18px;
+	padding: 0 6px;
+	background: var(--band);
+	font: 500 10.5px/1 var(--font-mono);
+	white-space: nowrap;
+	flex: none;
+}
+
+.tag {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	font-size: 12px;
+	font-weight: 500;
+	line-height: 1;
+	white-space: nowrap;
+	flex: none;
+}
+
+.tag.added {
+	color: var(--green);
+}
+
+.tag.changed {
+	color: var(--yellow);
+}
+
+.tag.removed,
+.tag.conflict {
+	color: var(--red);
+}
+
+.tag.info {
+	color: var(--blue);
+}
+
+.count {
+	position: absolute;
+	right: 0;
+	top: 0;
+	min-width: 15px;
+	height: 15px;
+	padding: 0 4px;
+	background: var(--count);
+	font: 600 9.5px/15px var(--font-mono);
+	text-align: center;
+}
+
+.count.warn {
+	background: var(--yellow);
+	color: var(--on-yellow);
+}
+
+.count.error {
+	background: var(--red-fill);
+	color: var(--on-red);
+}
+
+.dot {
+	display: inline-block;
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	flex: none;
+}
+
+.dot.ok {
+	background: var(--green);
+}
+
+.dot.push {
+	background: var(--yellow);
+}
+
+.dot.pull {
+	background: var(--blue);
+}
+
+.dot.error {
+	background: var(--red);
+}
+
+.dot.running {
+	width: 10px;
+	height: 10px;
+	border: 2.5px solid var(--green);
+}
+
+.dot.none {
+	border: 1.5px solid var(--grey);
+}
+
+.spinner {
+	width: 12px;
+	height: 12px;
+	border-radius: 50%;
+	border: 2px solid var(--raised-3);
+	border-top-color: var(--text);
+	flex: none;
+	animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+[aria-busy='true'] {
+	pointer-events: none;
+}
+
+button[aria-busy='true']:disabled {
+	opacity: 1;
+}
+
+.btn[aria-busy='true']::before,
+.item-row[aria-busy='true']::before {
+	content: '';
+	width: 9px;
+	height: 9px;
+	border-radius: 50%;
+	border: 1.5px solid currentColor;
+	border-right-color: transparent;
+	flex: none;
+	animation: spin 0.8s linear infinite;
+}
+
+.icon-btn[aria-busy='true'] svg {
+	animation: spin 0.8s linear infinite;
+}
+
+body:has(.scrim) [aria-busy='true']:not(.scrim *)::before {
+	content: none;
+}
+
+body:has(.scrim) .icon-btn[aria-busy='true']:not(.scrim *) svg {
+	animation: none;
+}
+
+.progress {
+	height: 4px;
+	background: var(--raised-3);
+	overflow: hidden;
+	flex: none;
+}
+
+.progress > i {
+	display: block;
+	height: 100%;
+	background: var(--text);
+}

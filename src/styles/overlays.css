@@ -1,0 +1,217 @@
+.scrim {
+	position: fixed;
+	inset: 0;
+	z-index: 40;
+	background: var(--scrim);
+	display: grid;
+	place-items: center;
+}
+
+.dialog {
+	display: flex;
+	flex-direction: column;
+	max-height: calc(100vh - 80px);
+	background: var(--overlay);
+	border: 1px solid var(--edge);
+	overflow: hidden;
+}
+
+.dialog:focus-visible {
+	outline: none;
+}
+
+.dialog-head {
+	flex: none;
+	display: flex;
+	align-items: stretch;
+	gap: 10px;
+	min-height: 44px;
+	padding-left: 18px;
+	background: var(--band);
+}
+
+.dialog-head .dialog-title {
+	align-self: center;
+	font-size: 15px;
+	font-weight: 600;
+}
+
+.dialog-head > .kbd {
+	min-width: 44px;
+	margin-left: auto;
+	align-self: stretch;
+}
+
+.dialog-body {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+	padding: 14px 18px 16px;
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+.dialog-body > .band {
+	margin: 0 -18px;
+	padding: 0 18px;
+}
+
+.dialog-foot {
+	flex: none;
+	display: flex;
+	align-items: stretch;
+	justify-content: flex-end;
+	gap: 1px;
+	min-height: var(--footer);
+	padding-left: 18px;
+	border-top: 1px solid var(--line);
+}
+
+.dialog-foot:has(> .btn:first-child) {
+	padding-left: 0;
+}
+
+.dialog-foot > .btn {
+	height: auto;
+	padding: 0 18px;
+}
+
+.dialog-foot > span {
+	align-self: center;
+}
+
+.menu {
+	position: fixed;
+	z-index: 60;
+	min-width: 200px;
+	max-height: 70vh;
+	overflow: auto;
+	display: flex;
+	flex-direction: column;
+	padding: 4px 0;
+	background: var(--overlay);
+	border: 1px solid var(--edge);
+}
+
+.menu-item {
+	flex: none;
+	width: 100%;
+	height: var(--row);
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 0 12px;
+	font-size: 13px;
+	white-space: nowrap;
+}
+
+.menu-item.active,
+.menu-item:not(:disabled):hover {
+	background: var(--selected);
+}
+
+.menu-item .keys {
+	margin-left: auto;
+	padding-left: 20px;
+	font: 500 11px var(--font-mono);
+}
+
+.menu-item.danger {
+	color: var(--red);
+}
+
+.menu-sep {
+	flex: none;
+	height: 1px;
+	margin: 4px 0;
+	background: var(--line);
+}
+
+.menu-heading {
+	flex: none;
+	display: flex;
+	align-items: center;
+	min-height: 26px;
+	margin: 2px 0;
+	padding: 0 12px;
+	background: var(--band);
+	font-size: 12.5px;
+	font-weight: 600;
+	white-space: nowrap;
+}
+
+.menu > .menu-heading:first-child {
+	margin-top: -4px;
+}
+
+.popover {
+	position: fixed;
+	z-index: 50;
+	display: flex;
+	flex-direction: column;
+	background: var(--overlay);
+	border: 1px solid var(--edge);
+}
+
+.toast {
+	display: flex;
+	align-items: stretch;
+	gap: 10px;
+	min-height: 38px;
+	padding-left: 12px;
+	background: var(--overlay);
+	border: 1px solid var(--edge);
+	font-size: 12.5px;
+	white-space: nowrap;
+	overflow: hidden;
+	pointer-events: auto;
+}
+
+.toast:not(:has(> .btn:last-child, > .icon-btn:last-child)) {
+	padding-right: 12px;
+}
+
+.toast > :is(svg, span) {
+	align-self: center;
+}
+
+.toast > .btn {
+	align-self: stretch;
+	height: auto;
+}
+
+.toast > .btn + :is(.btn, .icon-btn) {
+	margin-left: -9px;
+}
+
+.toast > .icon-btn {
+	align-self: stretch;
+	height: auto;
+	width: 34px;
+}
+
+.tooltip {
+	position: fixed;
+	z-index: 70;
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 24px;
+	padding-left: 8px;
+	background: var(--text);
+	color: var(--doc);
+	font-size: 12px;
+	white-space: nowrap;
+	pointer-events: none;
+}
+
+.tooltip:not(:has(.kbd)) {
+	padding-right: 8px;
+}
+
+.tooltip .kbd {
+	align-self: stretch;
+	background: color-mix(in srgb, var(--doc) 16%, transparent);
+	color: var(--doc);
+}

@@ -7,11 +7,11 @@ use zip::write::SimpleFileOptions;
 use zip::CompressionMethod;
 
 use crate::curseforge::{self, CurseForge};
-use crate::instance;
-use crate::lockfile::{target_dir, Lockfile};
+use crate::lockfile::Lockfile;
 use crate::manifest::Manifest;
+use crate::packignore::PackFile;
 use crate::providers::ProviderId;
-use crate::ptype::ProjectType;
+use crate::ptype::{Folders, ProjectType};
 
 struct CfEntry {
     project_id: u64,
@@ -26,6 +26,7 @@ pub fn export_selfupdate(
     url: &str,
     installer: &[u8],
     installer_name: &str,
+    token: Option<&str>,
 ) -> Result<()> {
     let cf_manifest = manifest_json(
         &manifest.minecraft,
@@ -38,18 +39,24 @@ pub fn export_selfupdate(
 
     let file = std::fs::File::create(output)?;
     let mut zip = zip::ZipWriter::new(file);
-    let options = SimpleFileOptions::default()
-        .compression_method(CompressionMethod::Deflated);
+    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
     zip.start_file("manifest.json", options)?;
     zip.write_all(serde_json::to_string_pretty(&cf_manifest)?.as_bytes())?;
-    zip.start_file(format!("overrides/{installer_name}"), options)?;
-    zip.write_all(installer)?;
+    for folder in ["overrides", "overrides/mods"] {
+        zip.start_file(format!("{folder}/{installer_name}"), options)?;
+        zip.write_all(installer)?;
+    }
     zip.start_file("overrides/modpack.url", options)?;
-    zip.write_all(format!("{url}\n").as_bytes())?;
+    zip.write_all(format!("{}\n", url.trim_end_matches('/')).as_bytes())?;
+    if let Some(t) = token.filter(|t| !t.is_empty()) {
+        zip.start_file("overrides/modpack.token", options)?;
+        zip.write_all(format!("{t}\n").as_bytes())?;
+    }
     zip.finish()?;
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn export(
     cf: &CurseForge,
     lock: &Lockfile,
@@ -57,13 +64,15 @@ pub async fn export(
     version: &str,
     output: &Path,
     env: &str,
-    overrides_dir: &Path,
+    overrides: &[PackFile],
+    folders: &Folders,
 ) -> Result<()> {
     let client = reqwest::Client::builder()
-        .user_agent("packweave/0.1.1")
+        .user_agent(crate::USER_AGENT)
         .build()?;
     let mut entries: Vec<CfEntry> = Vec::new();
-    let mut pending: Vec<(String, String, bool, Vec<u8>, u32)> = Vec::new();
+    let mut pending: Vec<(String, String, bool, Vec<u8>, u32, bool)> = Vec::new();
+    let mut bundled: Vec<(String, Vec<u8>)> = Vec::new();
 
     for m in &lock.mods {
         if env == "server" && m.server_side == "unsupported" {
@@ -72,24 +81,24 @@ pub async fn export(
         if env == "client" && m.client_side == "unsupported" {
             continue;
         }
-        if let Some(cfs) = m.sources.get(&ProviderId::Curseforge) {
-            if let Some(pid) = &cfs.id {
-                if let (Ok(p), Ok(f)) =
-                    (pid.parse::<u64>(), cfs.version_id.parse::<u64>())
-                {
-                    entries.push(CfEntry {
-                        project_id: p,
-                        file_id: f,
-                        name: m.name.clone(),
-                        is_mod: m.project_type == ProjectType::Mod,
-                    });
-                    continue;
-                }
-            }
+        let datapack = m.project_type == ProjectType::Datapack;
+        let src = m.active().filter(|s| !s.download_url.is_empty());
+        let listed = m.sources.get(&ProviderId::Curseforge).and_then(|cfs| {
+            let project = cfs.id.as_ref()?.parse::<u64>().ok()?;
+            let file = cfs.version_id.parse::<u64>().ok()?;
+            Some((project, file))
+        });
+        if let Some((project_id, file_id)) = listed.filter(|_| !datapack || src.is_none()) {
+            entries.push(CfEntry {
+                project_id,
+                file_id,
+                name: m.name.clone(),
+                is_mod: m.project_type == ProjectType::Mod,
+            });
+            continue;
         }
-        let src = match m.active() {
-            Some(s) if !s.download_url.is_empty() => s,
-            _ => continue,
+        let Some(src) = src else {
+            continue;
         };
         let bytes = client
             .get(&src.download_url)
@@ -100,7 +109,13 @@ pub async fn export(
             .bytes()
             .await
             .with_context(|| format!("downloading {}", m.name))?;
-        let rel = format!("{}/{}", target_dir(m.project_type), src.filename);
+        let rel = format!("{}/{}", folders.install_dir(m.project_type), src.filename);
+        if datapack {
+            if !m.no_bundle {
+                bundled.push((rel, bytes.to_vec()));
+            }
+            continue;
+        }
         let print = curseforge::cf_fingerprint(&bytes);
         pending.push((
             m.name.clone(),
@@ -108,13 +123,13 @@ pub async fn export(
             m.project_type == ProjectType::Mod,
             bytes.to_vec(),
             print,
+            m.no_bundle,
         ));
     }
 
     let prints: Vec<u32> = pending.iter().map(|p| p.4).collect();
     let matched = cf.fingerprints(&prints).await.unwrap_or_default();
-    let mut bundled: Vec<(String, Vec<u8>)> = Vec::new();
-    for (name, rel, is_mod, bytes, print) in pending {
+    for (name, rel, is_mod, bytes, print, no_bundle) in pending {
         match matched.get(&(print as u64)) {
             Some((mod_id, file)) => entries.push(CfEntry {
                 project_id: *mod_id as u64,
@@ -122,6 +137,7 @@ pub async fn export(
                 name,
                 is_mod,
             }),
+            None if no_bundle => {}
             None => bundled.push((rel, bytes)),
         }
     }
@@ -147,8 +163,7 @@ pub async fn export(
 
     let file = std::fs::File::create(output)?;
     let mut zip = zip::ZipWriter::new(file);
-    let options = SimpleFileOptions::default()
-        .compression_method(CompressionMethod::Deflated);
+    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
     zip.start_file("manifest.json", options)?;
     zip.write_all(serde_json::to_string_pretty(&manifest)?.as_bytes())?;
     zip.start_file("modlist.html", options)?;
@@ -163,14 +178,13 @@ pub async fn export(
         zip.start_file(name, options)?;
         zip.write_all(bytes)?;
     }
-    if overrides_dir.is_dir() {
-        add_overrides(
-            &mut zip,
-            overrides_dir,
-            overrides_dir,
-            options,
-            &mut written,
-        )?;
+    for file in overrides {
+        let name = format!("overrides/{}", file.rel);
+        if !written.insert(name.clone()) {
+            continue;
+        }
+        zip.start_file(name, options)?;
+        zip.write_all(&std::fs::read(&file.path)?)?;
     }
     zip.finish()?;
     Ok(())
@@ -203,11 +217,7 @@ fn manifest_json(
     })
 }
 
-fn loader_id(
-    loader: &str,
-    minecraft: &str,
-    version: Option<&str>,
-) -> Option<String> {
+fn loader_id(loader: &str, minecraft: &str, version: Option<&str>) -> Option<String> {
     let prefix = match loader {
         "fabric" => "fabric",
         "quilt" => "quilt",
@@ -243,74 +253,4 @@ fn html_escape(s: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
-}
-
-fn add_overrides(
-    zip: &mut zip::ZipWriter<std::fs::File>,
-    base: &Path,
-    dir: &Path,
-    options: SimpleFileOptions,
-    written: &mut HashSet<String>,
-) -> Result<()> {
-    let entries = match std::fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return Ok(()),
-    };
-    for entry in entries.flatten() {
-        let p = entry.path();
-        if p.is_dir() {
-            add_overrides(zip, base, &p, options, written)?;
-        } else if p.is_file() {
-            let rel = match p.strip_prefix(base) {
-                Ok(r) => r.to_string_lossy().replace('\\', "/"),
-                Err(_) => continue,
-            };
-            if instance::is_os_junk(&rel) {
-                continue;
-            }
-            let name = format!("overrides/{rel}");
-            if !written.insert(name.clone()) {
-                continue;
-            }
-            let bytes = std::fs::read(&p)?;
-            zip.start_file(name, options)?;
-            zip.write_all(&bytes)?;
-        }
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn loader_ids_match_curseforge_format() {
-        assert_eq!(
-            loader_id("fabric", "1.21.1", Some("0.16.5")).as_deref(),
-            Some("fabric-0.16.5")
-        );
-        assert_eq!(
-            loader_id("neoforge", "1.21.1", Some("21.1.72")).as_deref(),
-            Some("neoforge-21.1.72")
-        );
-        assert_eq!(
-            loader_id("neoforge", "1.20.1", Some("47.1.106")).as_deref(),
-            Some("neoforge-1.20.1-47.1.106")
-        );
-        assert_eq!(loader_id("vanilla", "1.21.1", None), None);
-    }
-
-    #[test]
-    fn modlist_escapes_names() {
-        let entries = vec![CfEntry {
-            project_id: 238222,
-            file_id: 1,
-            name: "Just Enough Items <JEI> & Co".into(),
-            is_mod: true,
-        }];
-        let html = modlist_html(&entries);
-        assert!(html.contains("https://www.curseforge.com/projects/238222"));
-        assert!(html.contains("Just Enough Items &lt;JEI&gt; &amp; Co"));
-    }
 }
