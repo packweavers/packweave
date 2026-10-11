@@ -22,6 +22,8 @@ export type BulkFailure = { raw: string, reason: string, line: number, };
 
 export type BulkLookup = { found: Array<BulkCandidate>, inPack: Array<BulkCandidate>, failed: Array<BulkFailure>, };
 
+export type Bundling = { bundled: Array<string>, leftOut: Array<string>, };
+
 export type CatalogHit = { projectId: string, slug: string, title: string, description: string, author: string, downloads: number, iconUrl: string | null, categories: Array<string>, projectType: string, clientSide: string | null, serverSide: string | null, };
 
 export type ChangePreview = { versions?: Array<VersionPin>, remove?: Array<string>, disable?: Array<string>, add?: Array<AddItem>, };

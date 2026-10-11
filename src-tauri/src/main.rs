@@ -240,6 +240,7 @@ fn main() {
             commands::export_mrpack_selfupdate,
             commands::export_curseforge_selfupdate,
             commands::export_dist,
+            commands::publish_bundling,
             commands::publish_pack,
             commands::fs_list,
             commands::fs_read,
