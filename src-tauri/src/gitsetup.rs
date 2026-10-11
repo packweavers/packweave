@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail, Result};
+use anyhow::{bail, Result};
 use serde::Serialize;
 use std::path::Path;
 use std::process::Command;
@@ -124,13 +124,13 @@ fn run_installer() -> Result<()> {
     Command::new("/usr/bin/xcode-select")
         .arg("--install")
         .spawn()
-        .map_err(|e| anyhow!("couldn't start the installer: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("couldn't start the installer: {e}"))?;
     Ok(())
 }
 
 #[cfg(target_os = "windows")]
 fn run_installer() -> Result<()> {
-    let winget = exists("winget").ok_or_else(|| anyhow!("winget isn't available."))?;
+    let winget = exists("winget").ok_or_else(|| anyhow::anyhow!("winget isn't available."))?;
     let mut cmd = Command::new(winget);
     use std::os::windows::process::CommandExt;
     cmd.creation_flags(0x0800_0000);
@@ -146,7 +146,7 @@ fn run_installer() -> Result<()> {
             "--accept-package-agreements",
         ])
         .output()
-        .map_err(|e| anyhow!("couldn't start the installer: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("couldn't start the installer: {e}"))?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
         let err = if err.trim().is_empty() {
