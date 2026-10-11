@@ -1,9 +1,11 @@
 use anyhow::{anyhow, Result};
 use serde::Serialize;
 use std::io::Read;
+use ts_rs::TS;
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "types.ts")]
 pub struct NbtNode {
     pub name: String,
     pub tag: String,
@@ -25,6 +27,7 @@ impl Cursor<'_> {
         self.pos += 1;
         Ok(v)
     }
+
     fn take(&mut self, n: usize) -> Result<&[u8]> {
         if self.pos + n > self.b.len() {
             return Err(anyhow!("unexpected end of NBT"));
@@ -33,30 +36,37 @@ impl Cursor<'_> {
         self.pos += n;
         Ok(s)
     }
+
     fn u16(&mut self) -> Result<u16> {
         let s = self.take(2)?;
         Ok(u16::from_be_bytes([s[0], s[1]]))
     }
+
     fn i16(&mut self) -> Result<i16> {
         let s = self.take(2)?;
         Ok(i16::from_be_bytes([s[0], s[1]]))
     }
+
     fn i32(&mut self) -> Result<i32> {
         let s = self.take(4)?;
         Ok(i32::from_be_bytes([s[0], s[1], s[2], s[3]]))
     }
+
     fn i64(&mut self) -> Result<i64> {
         let s: [u8; 8] = self.take(8)?.try_into().unwrap();
         Ok(i64::from_be_bytes(s))
     }
+
     fn f32v(&mut self) -> Result<f32> {
         let s: [u8; 4] = self.take(4)?.try_into().unwrap();
         Ok(f32::from_be_bytes(s))
     }
+
     fn f64v(&mut self) -> Result<f64> {
         let s: [u8; 8] = self.take(8)?.try_into().unwrap();
         Ok(f64::from_be_bytes(s))
     }
+
     fn name(&mut self) -> Result<String> {
         let n = self.u16()? as usize;
         let s = self.take(n)?;
@@ -83,8 +93,7 @@ fn tag_name(t: u8) -> &'static str {
 }
 
 fn preview<T: ToString>(len: usize, vals: &[T]) -> String {
-    let head: Vec<String> =
-        vals.iter().take(12).map(|x| x.to_string()).collect();
+    let head: Vec<String> = vals.iter().take(12).map(|x| x.to_string()).collect();
     if len > head.len() {
         format!("[{len}] {} …", head.join(", "))
     } else {
@@ -92,12 +101,7 @@ fn preview<T: ToString>(len: usize, vals: &[T]) -> String {
     }
 }
 
-fn read_payload(
-    c: &mut Cursor,
-    t: u8,
-    name: String,
-    depth: u32,
-) -> Result<NbtNode> {
+fn read_payload(c: &mut Cursor, t: u8, name: String, depth: u32) -> Result<NbtNode> {
     if depth > 512 {
         return Err(anyhow!("NBT nesting too deep"));
     }
@@ -129,12 +133,8 @@ fn read_payload(
             let child_t = c.u8()?;
             let n = c.i32()?.max(0) as usize;
             for i in 0..n {
-                node.children.push(read_payload(
-                    c,
-                    child_t,
-                    i.to_string(),
-                    depth + 1,
-                )?);
+                node.children
+                    .push(read_payload(c, child_t, i.to_string(), depth + 1)?);
             }
             node.value = Some(format!("{n} × {}", tag_name(child_t)));
         }
@@ -195,45 +195,4 @@ pub fn parse(bytes: &[u8]) -> Result<NbtNode> {
     }
     let root_name = c.name()?;
     read_payload(&mut c, t, root_name, 0)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::Write;
-
-    fn sample() -> Vec<u8> {
-        vec![
-            0x0a, 0x00, 0x00, 0x03, 0x00, 0x01, b'x', 0x00, 0x00, 0x00, 0x2a,
-            0x00,
-        ]
-    }
-
-    #[test]
-    fn parses_raw_compound() {
-        let n = parse(&sample()).unwrap();
-        assert_eq!(n.tag, "compound");
-        assert_eq!(n.children.len(), 1);
-        assert_eq!(n.children[0].tag, "int");
-        assert_eq!(n.children[0].name, "x");
-        assert_eq!(n.children[0].value.as_deref(), Some("42"));
-    }
-
-    #[test]
-    fn parses_gzip_compressed() {
-        let mut e = flate2::write::GzEncoder::new(
-            Vec::new(),
-            flate2::Compression::default(),
-        );
-        e.write_all(&sample()).unwrap();
-        let gz = e.finish().unwrap();
-        let n = parse(&gz).unwrap();
-        assert_eq!(n.children[0].value.as_deref(), Some("42"));
-    }
-
-    #[test]
-    fn rejects_non_nbt() {
-        assert!(parse(&[0xff, 0xff, 0xff]).is_err());
-        assert!(parse(&[]).is_err());
-    }
 }

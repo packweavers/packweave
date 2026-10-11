@@ -37,12 +37,7 @@ impl Cache {
         )
     }
 
-    pub fn get<T: DeserializeOwned>(
-        &self,
-        category: &str,
-        key: &str,
-        ttl_secs: u64,
-    ) -> Option<T> {
+    pub fn get<T: DeserializeOwned>(&self, category: &str, key: &str, ttl_secs: u64) -> Option<T> {
         let path = self.file(category, key)?;
         let text = std::fs::read_to_string(&path).ok()?;
         let v: serde_json::Value = serde_json::from_str(&text).ok()?;
@@ -69,16 +64,19 @@ impl Cache {
         }
     }
 
-    pub fn remove(&self, category: &str, key: &str) {
-        if let Some(path) = self.file(category, key) {
-            let _ = std::fs::remove_file(path);
+    pub fn clear_all(&self) -> std::io::Result<()> {
+        if let Some(dir) = self.dir.lock().unwrap().clone() {
+            crate::util::delete_dir_all(&dir)?;
+            std::fs::create_dir_all(&dir)?;
         }
+        Ok(())
     }
 
-    pub fn clear(&self, category: &str) {
+    pub fn clear(&self, category: &str) -> std::io::Result<()> {
         if let Some(dir) = self.dir.lock().unwrap().clone() {
-            let _ = std::fs::remove_dir_all(dir.join(category));
+            crate::util::delete_dir_all(&dir.join(category))?;
         }
+        Ok(())
     }
 }
 

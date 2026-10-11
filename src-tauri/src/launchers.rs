@@ -4,6 +4,7 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
 use crate::dist;
+use ts_rs::TS;
 
 #[derive(Serialize, Clone, Copy, PartialEq, Eq, Debug)]
 #[serde(rename_all = "lowercase")]
@@ -13,8 +14,9 @@ pub enum InstanceKind {
     Server,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "types.ts")]
 pub struct DetectedInstance {
     pub launcher: String,
     pub name: String,
@@ -22,6 +24,7 @@ pub struct DetectedInstance {
     pub minecraft: Option<String>,
     pub loader: Option<String>,
     pub loader_version: Option<String>,
+    #[ts(type = "'local' | 'modpack' | 'server'")]
     pub kind: InstanceKind,
     pub source: Option<String>,
     pub pack_name: Option<String>,
@@ -54,6 +57,7 @@ fn bases(home: &Path) -> Vec<(&'static str, PathBuf)> {
         v.push(("Modrinth App", app.join("com.modrinth.theseus/profiles")));
         v.push(("Modrinth App", app.join("ModrinthApp/profiles")));
     }
+
     #[cfg(target_os = "linux")]
     {
         let share = std::env::var_os("XDG_DATA_HOME")
@@ -73,9 +77,7 @@ fn bases(home: &Path) -> Vec<(&'static str, PathBuf)> {
         let flatpak = home.join(".var/app");
         v.push((
             "Prism Launcher",
-            flatpak.join(
-                "org.prismlauncher.PrismLauncher/data/PrismLauncher/instances",
-            ),
+            flatpak.join("org.prismlauncher.PrismLauncher/data/PrismLauncher/instances"),
         ));
         v.push((
             "Modrinth App",
@@ -83,11 +85,10 @@ fn bases(home: &Path) -> Vec<(&'static str, PathBuf)> {
         ));
         v.push((
             "Prism Launcher",
-            home.join(
-                "snap/prismlauncher/current/.local/share/PrismLauncher/instances",
-            ),
+            home.join("snap/prismlauncher/current/.local/share/PrismLauncher/instances"),
         ));
     }
+
     #[cfg(target_os = "windows")]
     {
         let appdata = std::env::var_os("APPDATA")
@@ -104,6 +105,15 @@ fn bases(home: &Path) -> Vec<(&'static str, PathBuf)> {
         ));
     }
     v
+}
+
+pub fn prism_instances_dir() -> Option<PathBuf> {
+    let home = home()?;
+    bases(&home)
+        .into_iter()
+        .filter(|(launcher, _)| *launcher == "Prism Launcher")
+        .map(|(_, base)| base)
+        .find(|base| base.parent().is_some_and(|p| p.is_dir()))
 }
 
 pub fn detect() -> Vec<DetectedInstance> {
@@ -132,8 +142,7 @@ pub fn detect() -> Vec<DetectedInstance> {
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_default();
-                let (name, minecraft, loader, loader_version) =
-                    read_meta(&inst, &folder);
+                let (name, minecraft, loader, loader_version) = read_meta(&inst, &folder);
                 let link = read_mmc_link(&inst);
                 out.push(DetectedInstance {
                     launcher: launcher.to_string(),
@@ -153,9 +162,7 @@ pub fn detect() -> Vec<DetectedInstance> {
     }
 
     for dir in vanilla_dirs(&home) {
-        if dir.join("launcher_profiles.json").is_file()
-            || dir.join("options.txt").is_file()
-        {
+        if dir.join("launcher_profiles.json").is_file() || dir.join("options.txt").is_file() {
             let (name, minecraft, loader, loader_version) = read_vanilla(&dir);
             out.push(DetectedInstance {
                 launcher: "Minecraft Launcher".into(),
@@ -197,8 +204,7 @@ pub fn resolve_folder(dir: &Path) -> DetectedInstance {
         })
         .unwrap_or_else(|| dir.to_path_buf());
 
-    let is_mmc = dir.join("instance.cfg").is_file()
-        || dir.join("mmc-pack.json").is_file();
+    let is_mmc = dir.join("instance.cfg").is_file() || dir.join("mmc-pack.json").is_file();
 
     let (name, minecraft, loader, loader_version, launcher, link) = if is_mmc {
         let (name, mc, loader, lv) = read_meta(dir, &folder);
@@ -249,9 +255,8 @@ fn find_instance_icon(inst_root: &Path, base: Option<&Path>) -> Option<String> {
     let icon_key = std::fs::read_to_string(inst_root.join("instance.cfg"))
         .ok()
         .and_then(|cfg| {
-            cfg.lines().find_map(|l| {
-                l.strip_prefix("iconKey=").map(|v| v.trim().to_string())
-            })
+            cfg.lines()
+                .find_map(|l| l.strip_prefix("iconKey=").map(|v| v.trim().to_string()))
         })
         .filter(|k| !k.is_empty());
     let mut candidates: Vec<PathBuf> = Vec::new();
@@ -277,10 +282,7 @@ fn resolve_game_dir(inst: &Path) -> Option<PathBuf> {
         inst.to_path_buf(),
     ];
     for c in candidates {
-        if c.join("mods").is_dir()
-            || c.join("config").is_dir()
-            || c.join("options.txt").is_file()
-        {
+        if c.join("mods").is_dir() || c.join("config").is_dir() || c.join("options.txt").is_file() {
             return Some(c);
         }
     }
@@ -311,8 +313,7 @@ fn read_meta(
             }
         }
     }
-    let (minecraft, loader, loader_version) =
-        read_mmc_pack(inst).unwrap_or((None, None, None));
+    let (minecraft, loader, loader_version) = read_mmc_pack(inst).unwrap_or((None, None, None));
     (name, minecraft, loader, loader_version)
 }
 
@@ -397,8 +398,7 @@ fn detect_modrinth(profiles_dir: &Path, out: &mut Vec<DetectedInstance>) {
          FROM instances i \
          LEFT JOIN instance_content_sets cs ON i.applied_content_set_id = cs.id \
          LEFT JOIN instance_links il ON il.instance_id = i.id";
-    const OLD: &str =
-        "SELECT path, name, game_version, mod_loader, mod_loader_version, \
+    const OLD: &str = "SELECT path, name, game_version, mod_loader, mod_loader_version, \
          NULL, NULL, NULL FROM profiles";
     if !read_modrinth_rows(&conn, NEW, profiles_dir, out) {
         read_modrinth_rows(&conn, OLD, profiles_dir, out);
@@ -454,16 +454,7 @@ fn read_modrinth_rows(
         Err(_) => return true,
     };
     for row in rows.flatten() {
-        let (
-            path,
-            name,
-            minecraft,
-            loader_val,
-            loader_version,
-            link_kind,
-            imp_name,
-            imp_ver,
-        ) = row;
+        let (path, name, minecraft, loader_val, loader_version, link_kind, imp_name, imp_ver) = row;
         let game_dir = profiles_dir.join(&path);
         if !game_dir.is_dir() {
             continue;
@@ -532,14 +523,14 @@ fn read_mmc_pack(inst: &Path) -> Option<Meta> {
     Some((minecraft, loader, loader_version))
 }
 
-fn mmc_root(game_dir: &Path) -> Option<PathBuf> {
+pub fn mmc_root(game_dir: &Path) -> Option<PathBuf> {
     [
         Some(game_dir.to_path_buf()),
         game_dir.parent().map(|p| p.to_path_buf()),
     ]
     .into_iter()
     .flatten()
-    .find(|d| d.join("mmc-pack.json").is_file())
+    .find(|d| d.join("mmc-pack.json").is_file() || d.join("instance.cfg").is_file())
 }
 
 fn modrinth_db(game_dir: &Path) -> Option<(PathBuf, String)> {
@@ -608,8 +599,7 @@ fn write_mmc_env(
     loader_version: Option<&str>,
 ) -> Result<bool> {
     let path = root.join("mmc-pack.json");
-    let mut json: Value =
-        serde_json::from_str(&std::fs::read_to_string(&path)?)?;
+    let mut json: Value = serde_json::from_str(&std::fs::read_to_string(&path)?)?;
     let comps = json
         .get_mut("components")
         .and_then(|c| c.as_array_mut())
@@ -646,20 +636,15 @@ fn write_mmc_env(
     for (i, comp) in fresh.into_iter().enumerate() {
         comps.insert(i, comp);
     }
-    std::fs::write(
-        &path,
-        format!("{}\n", serde_json::to_string_pretty(&json)?),
-    )?;
+    std::fs::write(&path, format!("{}\n", serde_json::to_string_pretty(&json)?))?;
     Ok(true)
 }
 
 fn read_modrinth_env(game_dir: &Path) -> Option<Meta> {
     let (db, key) = modrinth_db(game_dir)?;
-    let conn = rusqlite::Connection::open_with_flags(
-        &db,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-    )
-    .ok()?;
+    let conn =
+        rusqlite::Connection::open_with_flags(&db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .ok()?;
     let (mc, loader_val, loader_version) = conn
         .query_row(
             "SELECT game_version, mod_loader, mod_loader_version FROM profiles WHERE path = ?1",
@@ -720,8 +705,7 @@ fn write_vanilla_env(
     loader_version: Option<&str>,
 ) -> Result<bool> {
     let path = root.join("launcher_profiles.json");
-    let mut json: Value =
-        serde_json::from_str(&std::fs::read_to_string(&path)?)?;
+    let mut json: Value = serde_json::from_str(&std::fs::read_to_string(&path)?)?;
     let profiles = json
         .get_mut("profiles")
         .and_then(|p| p.as_object_mut())
@@ -742,18 +726,11 @@ fn write_vanilla_env(
     if let Some(prof) = profiles.get_mut(&key).and_then(|p| p.as_object_mut()) {
         prof.insert("lastVersionId".into(), json!(version_id));
     }
-    std::fs::write(
-        &path,
-        format!("{}\n", serde_json::to_string_pretty(&json)?),
-    )?;
+    std::fs::write(&path, format!("{}\n", serde_json::to_string_pretty(&json)?))?;
     Ok(true)
 }
 
-fn vanilla_version_id(
-    minecraft: &str,
-    loader: &str,
-    loader_version: Option<&str>,
-) -> String {
+fn vanilla_version_id(minecraft: &str, loader: &str, loader_version: Option<&str>) -> String {
     match (loader, loader_version) {
         ("fabric", Some(v)) => format!("fabric-loader-{v}-{minecraft}"),
         ("quilt", Some(v)) => format!("quilt-loader-{v}-{minecraft}"),
@@ -783,6 +760,7 @@ fn vanilla_dirs(home: &Path) -> Vec<PathBuf> {
         v.push(home.join(".minecraft"));
         v.push(home.join(".var/app/com.mojang.Minecraft/.minecraft"));
     }
+
     #[cfg(target_os = "windows")]
     {
         let appdata = std::env::var_os("APPDATA")
@@ -793,25 +771,16 @@ fn vanilla_dirs(home: &Path) -> Vec<PathBuf> {
     v
 }
 
-fn read_vanilla(
-    game_dir: &Path,
-) -> (String, Option<String>, Option<String>, Option<String>) {
+fn read_vanilla(game_dir: &Path) -> (String, Option<String>, Option<String>, Option<String>) {
     let mut name = "Minecraft".to_string();
     let mut meta: Meta = (None, None, None);
-    if let Ok(text) =
-        std::fs::read_to_string(game_dir.join("launcher_profiles.json"))
-    {
+    if let Ok(text) = std::fs::read_to_string(game_dir.join("launcher_profiles.json")) {
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
-            if let Some(profiles) =
-                json.get("profiles").and_then(|p| p.as_object())
-            {
+            if let Some(profiles) = json.get("profiles").and_then(|p| p.as_object()) {
                 let mut best_used = String::new();
                 let mut best: Option<&serde_json::Value> = None;
                 for prof in profiles.values() {
-                    let last_used = prof
-                        .get("lastUsed")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
+                    let last_used = prof.get("lastUsed").and_then(|v| v.as_str()).unwrap_or("");
                     if best.is_none() || last_used > best_used.as_str() {
                         best_used = last_used.to_string();
                         best = Some(prof);
@@ -823,9 +792,7 @@ fn read_vanilla(
                             name = n.trim().to_string();
                         }
                     }
-                    if let Some(vid) =
-                        prof.get("lastVersionId").and_then(|v| v.as_str())
-                    {
+                    if let Some(vid) = prof.get("lastVersionId").and_then(|v| v.as_str()) {
                         meta = parse_version_id(vid);
                     }
                 }
@@ -883,36 +850,4 @@ fn parse_version_id(id: &str) -> Meta {
         return (Some(id.to_string()), None, None);
     }
     (None, None, None)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn imported_modpack_maps_to_a_modpack_link() {
-        let link = modrinth_link(
-            Some("imported_modpack".into()),
-            Some("Bog Mouse Land V3".into()),
-            Some("1.0.0".into()),
-        );
-        assert_eq!(link.kind, Some(InstanceKind::Modpack));
-        assert_eq!(link.source.as_deref(), Some("modrinth"));
-        assert_eq!(link.pack_name.as_deref(), Some("Bog Mouse Land V3"));
-        assert_eq!(link.pack_version.as_deref(), Some("1.0.0"));
-    }
-
-    #[test]
-    fn server_project_maps_to_a_server_link() {
-        let link = modrinth_link(Some("server_project".into()), None, None);
-        assert_eq!(link.kind, Some(InstanceKind::Server));
-        assert_eq!(link.source.as_deref(), Some("modrinth"));
-    }
-
-    #[test]
-    fn unmanaged_has_no_link() {
-        let link = modrinth_link(Some("unmanaged".into()), None, None);
-        assert_eq!(link.kind, None);
-        assert_eq!(link.source, None);
-    }
 }

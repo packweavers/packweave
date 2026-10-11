@@ -9,14 +9,25 @@ pub const LOCAL_FILE: &str = ".pack-local.json";
 pub struct PackLocal {
     #[serde(default)]
     pub instance_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unchecked: Vec<String>,
 }
 
 pub fn read(dir: &Path) -> PackLocal {
-    let p = dir.join(LOCAL_FILE);
-    std::fs::read_to_string(p)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
+    let Ok(text) = std::fs::read_to_string(dir.join(LOCAL_FILE)) else {
+        return PackLocal::default();
+    };
+    if let Ok(local) = serde_json::from_str(&text) {
+        return local;
+    }
+    let base = serde_json::to_value(PackLocal::default()).unwrap_or_default();
+    match crate::lenient::repair::<PackLocal>(&text, base) {
+        Some((local, _)) => {
+            let _ = write(dir, &local);
+            local
+        }
+        None => PackLocal::default(),
+    }
 }
 
 pub fn write(dir: &Path, local: &PackLocal) -> Result<()> {

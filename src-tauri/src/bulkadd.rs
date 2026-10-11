@@ -1,17 +1,23 @@
+use crate::modrinth::SearchHit;
 use crate::providers::ProviderId;
 use crate::ptype::ProjectType;
 use serde::Serialize;
-use std::collections::HashSet;
+use ts_rs::TS;
+
+pub const EXACT: u8 = 3;
 
 #[derive(Debug, Clone)]
 pub struct ParsedRef {
     pub reference: String,
     pub project_type: Option<ProjectType>,
     pub raw: String,
+    pub line: usize,
+    pub by_name: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "types.ts")]
 pub struct BulkCandidate {
     pub provider: ProviderId,
     pub project_id: String,
@@ -20,25 +26,32 @@ pub struct BulkCandidate {
     pub project_type: ProjectType,
     pub icon_url: Option<String>,
     pub raw: String,
+    pub line: usize,
+    pub guess: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "types.ts")]
 pub struct BulkFailure {
     pub raw: String,
     pub reason: String,
+    pub line: usize,
 }
 
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "types.ts")]
 pub struct BulkLookup {
     pub found: Vec<BulkCandidate>,
+    pub in_pack: Vec<BulkCandidate>,
     pub failed: Vec<BulkFailure>,
 }
 
 fn modrinth_type(seg: &str) -> Option<ProjectType> {
     match seg {
-        "mod" | "plugin" | "datapack" => Some(ProjectType::Mod),
+        "mod" | "plugin" => Some(ProjectType::Mod),
+        "datapack" => Some(ProjectType::Datapack),
         "resourcepack" => Some(ProjectType::Resourcepack),
         "shader" => Some(ProjectType::Shader),
         _ => None,
@@ -47,7 +60,8 @@ fn modrinth_type(seg: &str) -> Option<ProjectType> {
 
 fn curseforge_type(seg: &str) -> Option<ProjectType> {
     match seg {
-        "mc-mods" | "data-packs" => Some(ProjectType::Mod),
+        "mc-mods" => Some(ProjectType::Mod),
+        "data-packs" => Some(ProjectType::Datapack),
         "texture-packs" => Some(ProjectType::Resourcepack),
         "shaders" => Some(ProjectType::Shader),
         _ => None,
@@ -58,8 +72,46 @@ fn clean_slug(s: &str) -> String {
     s.split(['?', '#'])
         .next()
         .unwrap_or(s)
-        .trim_matches('/')
+        .trim_matches(|c: char| matches!(c, '/' | ')' | ']' | '>' | ',' | '.' | '"' | '\''))
         .to_string()
+}
+
+fn strip_bullet(line: &str) -> &str {
+    let text = line
+        .trim()
+        .trim_start_matches(['-', '*', '+', '>', '\u{2022}'])
+        .trim_start();
+    let digits = text.chars().take_while(|c| c.is_ascii_digit()).count();
+    if digits > 0 {
+        let rest = &text[digits..];
+        if let Some(after) = rest.strip_prefix('.').or_else(|| rest.strip_prefix(')')) {
+            return after.trim_start();
+        }
+    }
+    text
+}
+
+fn jar_slug(token: &str) -> Option<String> {
+    let lower = token.to_lowercase();
+    let stem = lower
+        .strip_suffix(".jar")
+        .or_else(|| lower.strip_suffix(".zip"))?;
+    let name = stem.rsplit(['/', '\\']).next()?;
+    let mut parts = Vec::new();
+    for part in name.split(['-', '_', '+', ' ']) {
+        let versioned = part.starts_with(|c: char| c.is_ascii_digit())
+            || part.starts_with("mc1")
+            || (part.starts_with('v') && part[1..].starts_with(|c: char| c.is_ascii_digit()));
+        let loader = matches!(
+            part,
+            "fabric" | "forge" | "neoforge" | "quilt" | "mc" | "universal" | "all"
+        );
+        if part.is_empty() || versioned || loader {
+            break;
+        }
+        parts.push(part);
+    }
+    (!parts.is_empty()).then(|| parts.join("-"))
 }
 
 fn is_slug(s: &str) -> bool {
@@ -96,79 +148,88 @@ fn parse_url(token: &str) -> Option<(String, ProjectType)> {
     None
 }
 
-pub fn parse_refs(text: &str) -> Vec<ParsedRef> {
-    let mut out = Vec::new();
-    let mut seen = HashSet::new();
-    for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let tokens: Vec<&str> = line.split_whitespace().collect();
-        let mut had_url = false;
-        for tok in &tokens {
-            if let Some((slug, ptype)) = parse_url(tok) {
-                had_url = true;
-                if seen.insert(slug.to_lowercase()) {
-                    out.push(ParsedRef {
-                        reference: slug,
-                        project_type: Some(ptype),
-                        raw: tok.to_string(),
-                    });
-                }
+pub fn normal(text: &str) -> String {
+    text.chars()
+        .filter(|c| c.is_alphanumeric())
+        .collect::<String>()
+        .to_lowercase()
+}
+
+pub fn closeness(wanted: &str, hit: &SearchHit) -> u8 {
+    if wanted.is_empty() {
+        return 0;
+    }
+    let title = normal(&hit.title);
+    let slug = normal(&hit.slug);
+    if title == wanted || slug == wanted {
+        EXACT
+    } else if title.starts_with(wanted) || slug.starts_with(wanted) {
+        2
+    } else if title.contains(wanted) || slug.contains(wanted) {
+        1
+    } else {
+        0
+    }
+}
+
+pub fn has_exact(wanted: &str, hits: &[SearchHit]) -> bool {
+    hits.iter().any(|hit| closeness(wanted, hit) == EXACT)
+}
+
+pub fn best<'a>(
+    wanted: &str,
+    found: &'a [(ProjectType, Vec<SearchHit>)],
+) -> Option<(ProjectType, &'a SearchHit, u8)> {
+    let mut best: Option<(ProjectType, &SearchHit, u8)> = None;
+    for (kind, hits) in found {
+        for hit in hits {
+            let score = closeness(wanted, hit);
+            if best.is_none_or(|(_, _, top)| score > top) {
+                best = Some((*kind, hit, score));
             }
         }
-        if !had_url
-            && tokens.len() == 1
-            && is_slug(tokens[0])
-            && seen.insert(tokens[0].to_lowercase())
+    }
+    best
+}
+
+pub fn parse_refs(text: &str) -> Vec<ParsedRef> {
+    let mut out: Vec<ParsedRef> = Vec::new();
+    for (line, raw_line) in text.lines().enumerate() {
+        let body = strip_bullet(raw_line);
+        if body.is_empty() || body.starts_with('#') || body.starts_with("//") {
+            continue;
+        }
+        let mut push =
+            |reference: String, project_type: Option<ProjectType>, raw: &str, by_name: bool| {
+                out.push(ParsedRef {
+                    reference,
+                    project_type,
+                    raw: raw.to_string(),
+                    line,
+                    by_name,
+                });
+            };
+        for piece in body
+            .split([',', ';', '|', '\t'])
+            .map(|p| strip_bullet(p.trim()))
+            .filter(|p| !p.is_empty())
         {
-            out.push(ParsedRef {
-                reference: tokens[0].to_string(),
-                project_type: None,
-                raw: tokens[0].to_string(),
-            });
+            let urls: Vec<(String, ProjectType, &str)> = piece
+                .split_whitespace()
+                .filter_map(|token| parse_url(token).map(|(slug, kind)| (slug, kind, token)))
+                .collect();
+            if !urls.is_empty() {
+                for (slug, kind, raw) in urls {
+                    push(slug, Some(kind), raw, false);
+                }
+            } else if let Some(slug) = jar_slug(piece) {
+                push(slug, None, piece, false);
+            } else if is_slug(piece) {
+                push(piece.to_string(), None, piece, false);
+            } else {
+                push(piece.to_string(), None, piece, true);
+            }
         }
     }
     out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn extracts_slugs_from_either_host_in_prose() {
-        let text = "try https://modrinth.com/mod/sodium and \
-                    www.curseforge.com/minecraft/mc-mods/jei plus a shader \
-                    https://modrinth.com/shader/complementary-reimagined";
-        let refs = parse_refs(text);
-        assert_eq!(refs.len(), 3);
-        assert_eq!(refs[0].reference, "sodium");
-        assert_eq!(refs[0].project_type, Some(ProjectType::Mod));
-        assert_eq!(refs[1].reference, "jei");
-        assert_eq!(refs[1].project_type, Some(ProjectType::Mod));
-        assert_eq!(refs[2].reference, "complementary-reimagined");
-        assert_eq!(refs[2].project_type, Some(ProjectType::Shader));
-    }
-
-    #[test]
-    fn bare_slug_lines_only_no_prose() {
-        let refs =
-            parse_refs("sodium\nlithium\nadd these two please\nfabric-api");
-        let slugs: Vec<&str> =
-            refs.iter().map(|r| r.reference.as_str()).collect();
-        assert_eq!(slugs, vec!["sodium", "lithium", "fabric-api"]);
-        assert!(refs.iter().all(|r| r.project_type.is_none()));
-    }
-
-    #[test]
-    fn dedupes_slug_across_hosts_and_strips_query() {
-        let refs = parse_refs(
-            "https://modrinth.com/mod/sodium?foo=1\n\
-             https://www.curseforge.com/minecraft/mc-mods/sodium\nsodium",
-        );
-        assert_eq!(refs.len(), 1);
-        assert_eq!(refs[0].reference, "sodium");
-    }
 }

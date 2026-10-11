@@ -5,25 +5,15 @@ use std::collections::HashMap;
 use std::fmt;
 
 use crate::curseforge::CurseForge;
-use crate::modrinth::{
-    ModMeta, Modrinth, SearchHit, Version, VersionFile, VersionInfo,
-};
+use crate::modrinth::{ModMeta, Modrinth, SearchHit, Version, VersionFile, VersionInfo};
 use crate::ptype::ProjectType;
+use ts_rs::TS;
 
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Default,
-    Serialize,
-    Deserialize,
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize, TS,
 )]
 #[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "types.ts")]
 pub enum ProviderId {
     #[default]
     Modrinth,
@@ -58,6 +48,53 @@ impl fmt::Display for ProviderId {
     }
 }
 
+#[derive(Debug)]
+pub struct NoVersion {
+    pub minecraft: String,
+    pub loader: String,
+}
+
+impl fmt::Display for NoVersion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.loader.is_empty() {
+            write!(f, "No version for Minecraft {}", self.minecraft)
+        } else {
+            write!(
+                f,
+                "No version for Minecraft {} on {}",
+                self.minecraft,
+                loader_name(&self.loader)
+            )
+        }
+    }
+}
+
+impl std::error::Error for NoVersion {}
+
+pub fn no_version(minecraft: &str, loader: &str) -> NoVersion {
+    NoVersion {
+        minecraft: minecraft.to_string(),
+        loader: loader.to_string(),
+    }
+}
+
+pub fn loader_name(loader: &str) -> String {
+    match loader {
+        "fabric" => "Fabric".into(),
+        "forge" => "Forge".into(),
+        "neoforge" => "NeoForge".into(),
+        "quilt" => "Quilt".into(),
+        "vanilla" => "Vanilla".into(),
+        other => {
+            let mut chars = other.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().chain(chars).collect(),
+                None => String::new(),
+            }
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum DepKind {
     Required,
@@ -85,6 +122,7 @@ pub struct Resolved {
     pub client_side: Option<String>,
     pub server_side: Option<String>,
     pub deps: Vec<ResolvedDep>,
+    pub actual_type: Option<ProjectType>,
 }
 
 pub struct ProviderProject {
@@ -114,12 +152,7 @@ pub trait Provider: Send + Sync {
 
     async fn enrich(&self, ids: &[String]) -> Result<Vec<ModMeta>>;
 
-    async fn versions(
-        &self,
-        id: &str,
-        mc: &str,
-        loader: Option<&str>,
-    ) -> Result<Vec<VersionInfo>>;
+    async fn versions(&self, id: &str, mc: &str, loader: Option<&str>) -> Result<Vec<VersionInfo>>;
 
     async fn lookup(&self, reference: &str) -> Result<ProviderProject>;
 
@@ -136,18 +169,15 @@ pub trait Provider: Send + Sync {
     ) -> Result<Resolved>;
 }
 
-pub fn registry<'a>(
-    mr: &'a Modrinth,
-    cf: &'a CurseForge,
-) -> Vec<&'a dyn Provider> {
+pub fn registry<'a>(mr: &'a Modrinth, cf: &'a CurseForge) -> Vec<&'a dyn Provider> {
     vec![mr as &dyn Provider, cf as &dyn Provider]
 }
 
-pub fn by_id<'a>(
-    id: ProviderId,
-    mr: &'a Modrinth,
-    cf: &'a CurseForge,
-) -> Option<&'a dyn Provider> {
+fn not_content(name: &str) -> anyhow::Error {
+    anyhow!("“{name}” isn't a mod, resource pack, shader or data pack.")
+}
+
+pub fn by_id<'a>(id: ProviderId, mr: &'a Modrinth, cf: &'a CurseForge) -> Option<&'a dyn Provider> {
     registry(mr, cf).into_iter().find(|p| p.id() == id)
 }
 
@@ -173,12 +203,40 @@ pub fn pick_best(mut versions: Vec<Version>, channel: u8) -> Option<Version> {
     versions.into_iter().next()
 }
 
-pub fn pick_primary_file(files: &[VersionFile]) -> Option<VersionFile> {
+fn wanted_extension(project_type: ProjectType) -> Option<&'static str> {
+    match project_type {
+        ProjectType::Mod => Some(".jar"),
+        ProjectType::Datapack => Some(".zip"),
+        _ => None,
+    }
+}
+
+pub fn pick_file(files: &[VersionFile], project_type: ProjectType) -> Option<VersionFile> {
+    let wanted = wanted_extension(project_type);
+    let fits = |f: &&VersionFile| wanted.is_none_or(|ext| f.filename.to_lowercase().ends_with(ext));
     files
         .iter()
+        .filter(fits)
         .find(|f| f.primary)
+        .or_else(|| files.iter().find(fits))
+        .or_else(|| files.iter().find(|f| f.primary))
+        .or_else(|| files.first())
         .cloned()
-        .or_else(|| files.first().cloned())
+}
+
+pub fn file_type(
+    requested: ProjectType,
+    filename: &str,
+    loaders: &[String],
+) -> Option<ProjectType> {
+    let name = filename.to_lowercase();
+    match requested {
+        ProjectType::Datapack if name.ends_with(".jar") => Some(ProjectType::Mod),
+        ProjectType::Mod if name.ends_with(".zip") && loaders.iter().any(|l| l == "datapack") => {
+            Some(ProjectType::Datapack)
+        }
+        _ => None,
+    }
 }
 
 #[async_trait]
@@ -186,9 +244,11 @@ impl Provider for Modrinth {
     fn id(&self) -> ProviderId {
         ProviderId::Modrinth
     }
+
     fn display_name(&self) -> &'static str {
         "Modrinth"
     }
+
     fn configured(&self) -> bool {
         true
     }
@@ -218,17 +278,17 @@ impl Provider for Modrinth {
         Modrinth::enrich(self, ids).await
     }
 
-    async fn versions(
-        &self,
-        id: &str,
-        mc: &str,
-        loader: Option<&str>,
-    ) -> Result<Vec<VersionInfo>> {
+    async fn versions(&self, id: &str, mc: &str, loader: Option<&str>) -> Result<Vec<VersionInfo>> {
         Modrinth::mod_versions(self, id, mc, loader).await
     }
 
     async fn lookup(&self, reference: &str) -> Result<ProviderProject> {
         let p = Modrinth::project(self, reference).await?;
+        let project_type = match p.project_type.as_str() {
+            "modpack" => return Err(not_content(&p.title)),
+            "mod" if p.is_datapack() => ProjectType::Datapack,
+            other => ProjectType::from_api(other),
+        };
         let author = Modrinth::enrich(self, std::slice::from_ref(&p.id))
             .await
             .ok()
@@ -236,7 +296,7 @@ impl Provider for Modrinth {
             .map(|m| m.author)
             .unwrap_or_default();
         Ok(ProviderProject {
-            project_type: ProjectType::from_api(&p.project_type),
+            project_type,
             id: p.id,
             slug: p.slug,
             name: p.title,
@@ -248,9 +308,7 @@ impl Provider for Modrinth {
     async fn names(&self, ids: &[String]) -> HashMap<String, (String, String)> {
         Modrinth::projects_bulk(self, ids)
             .await
-            .map(|ps| {
-                ps.into_iter().map(|p| (p.id, (p.title, p.slug))).collect()
-            })
+            .map(|ps| ps.into_iter().map(|p| (p.id, (p.title, p.slug))).collect())
             .unwrap_or_default()
     }
 
@@ -263,29 +321,19 @@ impl Provider for Modrinth {
         project_type: ProjectType,
         channel: u8,
     ) -> Result<Resolved> {
-        let lf = if project_type == ProjectType::Mod {
-            Some(loader)
-        } else {
-            None
-        };
+        let lf = project_type.version_loader(loader);
         let version = match version {
             Some(p) if !p.is_empty() => Modrinth::version(self, p).await?,
-            _ => pick_best(
-                Modrinth::project_versions(self, id, mc, lf).await?,
-                channel,
-            )
-            .ok_or_else(|| {
-                anyhow!("No version published for Minecraft {mc} on {loader}.")
-            })?,
+            _ => pick_best(Modrinth::project_versions(self, id, mc, lf).await?, channel)
+                .ok_or_else(|| no_version(mc, loader))?,
         };
         let proj = Modrinth::project(self, id).await?;
         let (download_url, filename, sha1, sha512, file_size) =
-            match pick_primary_file(&version.files) {
-                Some(f) => {
-                    (f.url, f.filename, f.hashes.sha1, f.hashes.sha512, f.size)
-                }
+            match pick_file(&version.files, project_type) {
+                Some(f) => (f.url, f.filename, f.hashes.sha1, f.hashes.sha512, f.size),
                 None => (String::new(), String::new(), None, None, 0),
             };
+        let actual_type = file_type(project_type, &filename, &version.loaders);
         let mut deps = Vec::new();
         for d in &version.dependencies {
             let kind = match d.dependency_type.as_str() {
@@ -326,6 +374,7 @@ impl Provider for Modrinth {
             client_side: Some(proj.client_side),
             server_side: Some(proj.server_side),
             deps,
+            actual_type,
         })
     }
 }
@@ -335,9 +384,11 @@ impl Provider for CurseForge {
     fn id(&self) -> ProviderId {
         ProviderId::Curseforge
     }
+
     fn display_name(&self) -> &'static str {
         "CurseForge"
     }
+
     fn configured(&self) -> bool {
         CurseForge::configured()
     }
@@ -351,16 +402,7 @@ impl Provider for CurseForge {
         offset: u32,
         limit: u32,
     ) -> Result<Vec<SearchHit>> {
-        let mods = CurseForge::search(
-            self,
-            query,
-            mc,
-            loader,
-            project_type,
-            offset,
-            limit,
-        )
-        .await?;
+        let mods = CurseForge::search(self, query, mc, loader, project_type, offset, limit).await?;
         Ok(mods
             .into_iter()
             .map(|m| SearchHit {
@@ -390,12 +432,7 @@ impl Provider for CurseForge {
         CurseForge::enrich(self, ids).await
     }
 
-    async fn versions(
-        &self,
-        id: &str,
-        mc: &str,
-        loader: Option<&str>,
-    ) -> Result<Vec<VersionInfo>> {
+    async fn versions(&self, id: &str, mc: &str, loader: Option<&str>) -> Result<Vec<VersionInfo>> {
         CurseForge::versions(self, id, mc, loader.unwrap_or("")).await
     }
 
@@ -408,12 +445,12 @@ impl Provider for CurseForge {
         } else {
             CurseForge::find_by_slug(self, reference)
                 .await?
-                .ok_or_else(|| {
-                    anyhow!("No CurseForge mod for slug “{reference}”.")
-                })?
+                .ok_or_else(|| anyhow!("No CurseForge project for slug “{reference}”."))?
         };
+        let project_type =
+            crate::curseforge::content_type(m.class_id).ok_or_else(|| not_content(&m.name))?;
         Ok(ProviderProject {
-            project_type: crate::curseforge::type_from_class(m.class_id),
+            project_type,
             id: m.id.to_string(),
             slug: m.slug,
             name: m.name,
@@ -444,8 +481,7 @@ impl Provider for CurseForge {
         } else {
             ""
         };
-        let r = CurseForge::resolve(self, id, version, mc, cf_loader, channel)
-            .await?;
+        let r = CurseForge::resolve(self, id, version, mc, cf_loader, channel).await?;
         let deps = r
             .deps
             .iter()
@@ -464,6 +500,7 @@ impl Provider for CurseForge {
                 })
             })
             .collect();
+        let actual_type = file_type(project_type, &r.filename, &[]);
         Ok(Resolved {
             slug: if r.slug.is_empty() {
                 id.to_string()
@@ -485,6 +522,7 @@ impl Provider for CurseForge {
             client_side: None,
             server_side: None,
             deps,
+            actual_type,
         })
     }
 }

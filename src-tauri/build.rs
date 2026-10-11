@@ -28,10 +28,7 @@ const WINDOWS_MANIFEST: &str = r#"<?xml version="1.0" encoding="UTF-8" standalon
 "#;
 
 fn main() {
-    let windows =
-        tauri_build::WindowsAttributes::new().app_manifest(WINDOWS_MANIFEST);
-    tauri_build::try_build(
-        tauri_build::Attributes::new().windows_attributes(windows),
-    )
-    .expect("failed to run tauri-build");
+    let windows = tauri_build::WindowsAttributes::new().app_manifest(WINDOWS_MANIFEST);
+    tauri_build::try_build(tauri_build::Attributes::new().windows_attributes(windows))
+        .expect("failed to run tauri-build");
 }

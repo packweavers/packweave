@@ -1,0 +1,35 @@
+name: AUR
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        required: true
+
+jobs:
+  publish:
+    if: github.event_name == 'workflow_dispatch' || vars.AUR_PUBLISH == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fill in the version and checksum
+        shell: bash
+        run: |
+          tag="${{ github.event.release.tag_name || inputs.tag }}"
+          version="${tag#v}"
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/packweave-linux-amd64.deb"
+          curl -fsSL "$url" -o packweave.deb
+          sum=$(sha256sum packweave.deb | cut -d' ' -f1)
+          sed -i "s/^pkgver=.*/pkgver=${version}/; s/^pkgrel=.*/pkgrel=1/; s/^sha256sums=.*/sha256sums=('${sum}')/" packaging/aur/PKGBUILD
+          cat packaging/aur/PKGBUILD
+      - uses: KSXGitHub/github-actions-deploy-aur@v3.0.1
+        with:
+          pkgname: packweave-bin
+          pkgbuild: packaging/aur/PKGBUILD
+          commit_username: ${{ secrets.AUR_USERNAME }}
+          commit_email: ${{ secrets.AUR_EMAIL }}
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: Update to ${{ github.event.release.tag_name || inputs.tag }}
+          updpkgsums: false

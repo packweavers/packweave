@@ -1,0 +1,18 @@
+pkgname=packweave-bin
+pkgver=1.0.0
+pkgrel=1
+pkgdesc='A Minecraft modpack IDE with git-native packs, Modrinth and CurseForge, two-way instance sync, and one-click publishing.'
+arch=('x86_64')
+url='https://packweave.com'
+license=('GPL-3.0-only')
+depends=('webkit2gtk-4.1' 'gtk3' 'hicolor-icon-theme')
+optdepends=('git: version control for your packs')
+provides=('packweave')
+conflicts=('packweave')
+options=('!strip' '!debug')
+source=("packweave-${pkgver}.deb::https://github.com/packweavers/packweave/releases/download/v${pkgver}/packweave-linux-amd64.deb")
+sha256sums=('SKIP')
+
+package() {
+	bsdtar -xf data.tar.gz -C "${pkgdir}"
+}

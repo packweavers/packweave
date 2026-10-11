@@ -1,0 +1,65 @@
+.code {
+	font: 400 var(--code-size, 12px) / var(--code-line, 20px) var(--font-mono);
+	font-variant-ligatures: none;
+	white-space: pre;
+	tab-size: 2;
+}
+
+.diff-line {
+	display: flex;
+	min-width: max-content;
+}
+
+.diff-line > .num {
+	width: 44px;
+	flex: none;
+	padding-right: 10px;
+	text-align: right;
+	user-select: none;
+	-webkit-user-select: none;
+}
+
+.diff-line > .sign {
+	width: 16px;
+	flex: none;
+	text-align: center;
+	user-select: none;
+	-webkit-user-select: none;
+}
+
+.diff-line.add {
+	background: var(--add-bg);
+}
+
+.diff-line.add > .sign {
+	color: var(--green);
+}
+
+.diff-line.del {
+	background: var(--del-bg);
+}
+
+.diff-line.del > .sign {
+	color: var(--red);
+}
+
+.diff-gap {
+	padding: 0 14px;
+	background: var(--band);
+	font: 400 var(--code-size, 12px) / var(--code-line, 20px) var(--font-mono);
+}
+
+.hit {
+	background: var(--hit-bg);
+}
+
+.t-comment {
+	font-style: italic;
+}
+
+.t-key,
+.t-keyword,
+.t-atrule,
+.t-section {
+	font-weight: 600;
+}

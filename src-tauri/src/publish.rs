@@ -1,19 +1,20 @@
 use anyhow::{bail, Result};
 use serde_json::json;
-use std::path::Path;
 
 use crate::cfpack;
 use crate::curseforge::CurseForge;
 use crate::lockfile::Lockfile;
 use crate::manifest::Manifest;
 use crate::mrpack;
+use crate::packignore::PackFile;
+use crate::ptype::Folders;
 use crate::USER_AGENT;
 
 #[allow(clippy::too_many_arguments)]
 pub async fn publish_modrinth(
     lock: &Lockfile,
     manifest: &Manifest,
-    overrides: &Path,
+    overrides: &[PackFile],
     project_id: &str,
     version_number: &str,
     changelog: &str,
@@ -26,10 +27,17 @@ pub async fn publish_modrinth(
     if project_id.is_empty() {
         bail!("Enter the Modrinth project id.");
     }
-    let tmp = std::env::temp_dir()
-        .join(format!("packweave-{}.mrpack", sanitize(version_number)));
-    mrpack::export(lock, &manifest.name, version_number, &tmp, env, overrides)
-        .await?;
+    let tmp = std::env::temp_dir().join(format!("packweave-{}.mrpack", file_safe(version_number)));
+    mrpack::export(
+        lock,
+        &manifest.name,
+        version_number,
+        &tmp,
+        env,
+        overrides,
+        &Folders::of(manifest),
+    )
+    .await?;
     let bytes = std::fs::read(&tmp)?;
     let _ = std::fs::remove_file(&tmp);
 
@@ -74,8 +82,7 @@ pub async fn publish_modrinth(
             truncate(&text)
         );
     }
-    let v: serde_json::Value =
-        serde_json::from_str(&text).unwrap_or_else(|_| json!({}));
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap_or_else(|_| json!({}));
     let id = v["id"].as_str().unwrap_or_default();
     Ok(format!(
         "https://modrinth.com/project/{project_id}/version/{id}"
@@ -87,7 +94,7 @@ pub async fn publish_curseforge(
     cf: &CurseForge,
     lock: &Lockfile,
     manifest: &Manifest,
-    overrides: &Path,
+    overrides: &[PackFile],
     project_id: &str,
     version_number: &str,
     changelog: &str,
@@ -100,8 +107,7 @@ pub async fn publish_curseforge(
     if project_id.is_empty() {
         bail!("Enter the CurseForge project id.");
     }
-    let tmp = std::env::temp_dir()
-        .join(format!("packweave-{}-cf.zip", sanitize(version_number)));
+    let tmp = std::env::temp_dir().join(format!("packweave-{}-cf.zip", file_safe(version_number)));
     cfpack::export(
         cf,
         lock,
@@ -110,20 +116,16 @@ pub async fn publish_curseforge(
         &tmp,
         env,
         overrides,
+        &Folders::of(manifest),
     )
     .await?;
     let bytes = std::fs::read(&tmp)?;
     let _ = std::fs::remove_file(&tmp);
 
     let client = reqwest::Client::builder().user_agent(USER_AGENT).build()?;
-    let game_versions = cf_game_version_ids(
-        &client,
-        token,
-        &manifest.minecraft,
-        &manifest.loader,
-    )
-    .await
-    .unwrap_or_default();
+    let game_versions = cf_game_version_ids(&client, token, &manifest.minecraft, &manifest.loader)
+        .await
+        .unwrap_or_default();
     let metadata = json!({
         "changelog": changelog,
         "changelogType": "text",
@@ -132,7 +134,7 @@ pub async fn publish_curseforge(
     });
 
     let part = reqwest::multipart::Part::bytes(bytes)
-        .file_name(format!("{}.zip", sanitize(&manifest.name)))
+        .file_name(format!("{}.zip", file_safe(&manifest.name)))
         .mime_str("application/zip")?;
     let form = reqwest::multipart::Form::new()
         .text("metadata", serde_json::to_string(&metadata)?)
@@ -153,8 +155,7 @@ pub async fn publish_curseforge(
             truncate(&text)
         );
     }
-    let v: serde_json::Value =
-        serde_json::from_str(&text).unwrap_or_else(|_| json!({}));
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap_or_else(|_| json!({}));
     let id = v["id"].as_i64().map(|n| n.to_string()).unwrap_or_default();
     Ok(format!(
         "Uploaded to CurseForge project {project_id} (file {id})."
@@ -195,7 +196,7 @@ async fn cf_game_version_ids(
     Ok(ids)
 }
 
-fn sanitize(s: &str) -> String {
+fn file_safe(s: &str) -> String {
     let cleaned: String = s
         .chars()
         .map(|c| {
@@ -215,9 +216,8 @@ fn sanitize(s: &str) -> String {
 
 fn truncate(s: &str) -> String {
     let t = s.trim();
-    if t.len() > 280 {
-        format!("{}…", &t[..280])
-    } else {
-        t.to_string()
+    match t.char_indices().nth(280) {
+        Some((end, _)) => format!("{}…", &t[..end]),
+        None => t.to_string(),
     }
 }

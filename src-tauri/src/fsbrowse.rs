@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use serde::Serialize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use ts_rs::TS;
 
 const MAX_TEXT: u64 = 2_000_000;
 
@@ -17,33 +18,34 @@ const HIDDEN: &[&str] = &[
     "__macosx",
 ];
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "types.ts")]
 pub struct FsEntry {
     pub name: String,
     pub is_dir: bool,
     pub size: u64,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Default, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "types.ts")]
 pub struct FileContent {
     pub text: Option<String>,
+    pub missing: bool,
     pub binary: bool,
     pub too_large: bool,
     pub size: u64,
 }
 
-fn resolve(root: &str, rel: &str) -> Result<PathBuf> {
+pub fn resolve(root: &str, rel: &str) -> Result<PathBuf> {
     use std::path::Component;
     if rel.split(['/', '\\']).any(|c| c == "..")
         || rel.starts_with(['/', '\\'])
         || std::path::Path::new(rel).components().any(|c| {
             matches!(
                 c,
-                Component::Prefix(_)
-                    | Component::RootDir
-                    | Component::ParentDir
+                Component::Prefix(_) | Component::RootDir | Component::ParentDir
             )
         })
     {
@@ -81,27 +83,33 @@ pub fn list_dir(root: &str, rel: &str) -> Result<Vec<FsEntry>> {
 
 pub fn read_file(root: &str, rel: &str) -> Result<FileContent> {
     let p = resolve(root, rel)?;
-    let size = std::fs::metadata(&p)?.len();
+    let size = match std::fs::metadata(&p) {
+        Ok(meta) => meta.len(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(FileContent {
+                missing: true,
+                ..Default::default()
+            });
+        }
+        Err(e) => return Err(e.into()),
+    };
     if size > MAX_TEXT {
         return Ok(FileContent {
-            text: None,
-            binary: false,
             too_large: true,
             size,
+            ..Default::default()
         });
     }
     match String::from_utf8(std::fs::read(&p)?) {
         Ok(text) => Ok(FileContent {
             text: Some(text),
-            binary: false,
-            too_large: false,
             size,
+            ..Default::default()
         }),
         Err(_) => Ok(FileContent {
-            text: None,
             binary: true,
-            too_large: false,
             size,
+            ..Default::default()
         }),
     }
 }
@@ -152,14 +160,22 @@ pub fn create_directory(root: &str, rel: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn delete_entry(root: &str, rel: &str) -> Result<()> {
-    let p = resolve(root, rel)?;
-    if p.is_dir() {
-        std::fs::remove_dir_all(p)?;
-    } else if p.exists() {
-        std::fs::remove_file(p)?;
-    }
+pub fn trash(path: &Path) -> Result<()> {
+    trash_context().delete(path)?;
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn trash_context() -> trash::TrashContext {
+    use trash::macos::{DeleteMethod, TrashContextExtMacos};
+    let mut context = trash::TrashContext::default();
+    context.set_delete_method(DeleteMethod::NsFileManager);
+    context
+}
+
+#[cfg(not(target_os = "macos"))]
+fn trash_context() -> trash::TrashContext {
+    trash::TrashContext::default()
 }
 
 pub fn rename_entry(root: &str, from: &str, to: &str) -> Result<()> {

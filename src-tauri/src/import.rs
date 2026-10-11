@@ -41,11 +41,7 @@ pub async fn import_pack(
     }
 }
 
-async fn import_mrpack(
-    mr: &Modrinth,
-    archive: &mut Archive,
-    dest: &Path,
-) -> Result<Manifest> {
+async fn import_mrpack(mr: &Modrinth, archive: &mut Archive, dest: &Path) -> Result<Manifest> {
     let index: Value = read_json(archive, "modrinth.index.json")?;
     let name = index["name"]
         .as_str()
@@ -84,13 +80,16 @@ async fn import_mrpack(
             _ => {}
         }
     }
-    let mf = Manifest {
+    let mut mf = Manifest {
         name,
         version: "1.0.0".into(),
         minecraft,
         loader,
         loader_version,
         channel: crate::manifest::Channel::Release,
+        datapacks: None,
+        packweave_md: true,
+        format_version: 0,
     };
     std::fs::create_dir_all(dest)?;
     manifest::write(dest, &mf)?;
@@ -106,17 +105,24 @@ async fn import_mrpack(
         sha_for_idx.push(sha1);
     }
     let by_hash = mr.versions_by_hashes(&hashes).await.unwrap_or_default();
-    let proj_ids: Vec<String> =
-        by_hash.values().map(|v| v.project_id.clone()).collect();
+    let proj_ids: Vec<String> = by_hash.values().map(|v| v.project_id.clone()).collect();
     let projects = mr.projects_bulk(&proj_ids).await.unwrap_or_default();
     let mut name_by_pid: HashMap<String, (String, String)> = HashMap::new();
     for p in projects {
         name_by_pid.insert(p.id.clone(), (p.title.clone(), p.slug.clone()));
     }
 
+    let datapacks = datapack_folder_of(&files, &sha_for_idx, &by_hash);
+    if datapacks.is_some() {
+        mf.datapacks = datapacks.clone();
+        manifest::write(dest, &mf)?;
+    }
     for (i, f) in files.iter().enumerate() {
         let path = f["path"].as_str().unwrap_or_default().to_string();
-        let project_type = type_from_path(&path);
+        let project_type = match (&datapacks, path.rsplit_once('/')) {
+            (Some(folder), Some((parent, _))) if parent == folder => ProjectType::Datapack,
+            _ => type_from_path(&path),
+        };
         let env_client = f["env"]["client"]
             .as_str()
             .unwrap_or("required")
@@ -148,19 +154,22 @@ async fn import_mrpack(
                 &ContentItem {
                     name: nm,
                     project_type,
+                    file: String::new(),
                     side,
                     explicit: true,
                     disabled: false,
+                    pinned: false,
                     preferred: ProviderId::Modrinth,
                     sources,
                     dependents: Vec::new(),
+                    optional_dependents: Vec::new(),
+                    no_bundle: false,
                     client_side: env_client,
                     server_side: env_server,
                 },
             )?;
         } else {
-            let url =
-                f["downloads"][0].as_str().unwrap_or_default().to_string();
+            let url = f["downloads"][0].as_str().unwrap_or_default().to_string();
             if url.is_empty() {
                 continue;
             }
@@ -179,12 +188,16 @@ async fn import_mrpack(
                 &ContentItem {
                     name: stem,
                     project_type,
+                    file: String::new(),
                     side,
                     explicit: true,
                     disabled: false,
+                    pinned: false,
                     preferred: ProviderId::Url,
                     sources,
                     dependents: Vec::new(),
+                    optional_dependents: Vec::new(),
+                    no_bundle: false,
                     client_side: env_client,
                     server_side: env_server,
                 },
@@ -215,8 +228,7 @@ fn import_curseforge(archive: &mut Archive, dest: &Path) -> Result<Manifest> {
         .iter()
         .find(|l| l["primary"].as_bool().unwrap_or(false))
         .or_else(|| loaders.first());
-    let (loader, loader_version) = match primary.and_then(|l| l["id"].as_str())
-    {
+    let (loader, loader_version) = match primary.and_then(|l| l["id"].as_str()) {
         Some(id) => parse_cf_loader(id),
         None => ("vanilla".to_string(), None),
     };
@@ -227,6 +239,9 @@ fn import_curseforge(archive: &mut Archive, dest: &Path) -> Result<Manifest> {
         loader,
         loader_version,
         channel: crate::manifest::Channel::Release,
+        datapacks: None,
+        packweave_md: true,
+        format_version: 0,
     };
     std::fs::create_dir_all(dest)?;
     manifest::write(dest, &mf)?;
@@ -254,12 +269,16 @@ fn import_curseforge(archive: &mut Archive, dest: &Path) -> Result<Manifest> {
             &ContentItem {
                 name: String::new(),
                 project_type: ProjectType::Mod,
+                file: String::new(),
                 side: "auto".into(),
                 explicit: true,
                 disabled: false,
+                pinned: false,
                 preferred: ProviderId::Curseforge,
                 sources,
                 dependents: Vec::new(),
+                optional_dependents: Vec::new(),
+                no_bundle: false,
                 client_side: "required".into(),
                 server_side: "required".into(),
             },
@@ -327,11 +346,9 @@ async fn import_prism(
     let mut loader_version: Option<String> = None;
     if let Ok(text) = read_text(archive, &format!("{root}mmc-pack.json")) {
         if let Ok(json) = serde_json::from_str::<Value>(&text) {
-            let comps =
-                json.get("components").and_then(|c| c.as_array()).cloned();
+            let comps = json.get("components").and_then(|c| c.as_array()).cloned();
             for comp in comps.unwrap_or_default() {
-                let uid =
-                    comp.get("uid").and_then(|u| u.as_str()).unwrap_or("");
+                let uid = comp.get("uid").and_then(|u| u.as_str()).unwrap_or("");
                 let ver = comp
                     .get("version")
                     .and_then(|v| v.as_str())
@@ -367,6 +384,9 @@ async fn import_prism(
         loader,
         loader_version,
         channel: crate::manifest::Channel::Release,
+        datapacks: None,
+        packweave_md: true,
+        format_version: 0,
     };
     std::fs::create_dir_all(dest)?;
     manifest::write(dest, &mf)?;
@@ -384,10 +404,7 @@ async fn import_prism(
     let mod_names: Vec<String> = names
         .iter()
         .filter(|n| match n.replace('\\', "/").strip_prefix(game.as_str()) {
-            Some(r) => {
-                r.starts_with("mods/")
-                    && (r.ends_with(".jar") || r.ends_with(".zip"))
-            }
+            Some(r) => r.starts_with("mods/") && (r.ends_with(".jar") || r.ends_with(".zip")),
             None => false,
         })
         .cloned()
@@ -413,8 +430,7 @@ async fn import_prism(
         .collect();
     let cf_found = cf.fingerprints(&prints).await.unwrap_or_default();
 
-    let proj_ids: Vec<String> =
-        mr_found.values().map(|v| v.project_id.clone()).collect();
+    let proj_ids: Vec<String> = mr_found.values().map(|v| v.project_id.clone()).collect();
     let projects = mr.projects_bulk(&proj_ids).await.unwrap_or_default();
     let name_by_pid: HashMap<String, (String, String)> = projects
         .into_iter()
@@ -439,10 +455,7 @@ async fn import_prism(
                     ..Default::default()
                 },
             );
-            content::add_item(
-                dest,
-                &mod_item(nm, ProviderId::Modrinth, sources),
-            )?;
+            content::add_item(dest, &mod_item(nm, ProviderId::Modrinth, sources))?;
             matched.insert(entry.clone());
         } else if let Some((mod_id, file)) = cf_found.get(&(*murmur as u64)) {
             let mut sources = BTreeMap::new();
@@ -501,22 +514,22 @@ fn mod_item(
     ContentItem {
         name,
         project_type: ProjectType::Mod,
+        file: String::new(),
         side: "auto".into(),
         explicit: true,
         disabled: false,
+        pinned: false,
         preferred: provider,
         sources,
         dependents: Vec::new(),
+        optional_dependents: Vec::new(),
+        no_bundle: false,
         client_side: "required".into(),
         server_side: "required".into(),
     }
 }
 
-fn extract_overrides(
-    archive: &mut Archive,
-    dest: &Path,
-    prefixes: &[&str],
-) -> Result<()> {
+fn extract_overrides(archive: &mut Archive, dest: &Path, prefixes: &[&str]) -> Result<()> {
     let base = instance::overrides_dir(dest);
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i)?;
@@ -548,8 +561,31 @@ fn type_from_path(path: &str) -> ProjectType {
     match path.split('/').next().unwrap_or("") {
         "resourcepacks" => ProjectType::Resourcepack,
         "shaderpacks" | "shaders" => ProjectType::Shader,
+        "datapacks" => ProjectType::Datapack,
         _ => ProjectType::Mod,
     }
+}
+
+fn datapack_folder_of(
+    files: &[Value],
+    hashes: &[Option<String>],
+    by_hash: &HashMap<String, crate::modrinth::Version>,
+) -> Option<String> {
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for (f, sha) in files.iter().zip(hashes) {
+        let datapack = sha
+            .as_ref()
+            .and_then(|s| by_hash.get(s))
+            .is_some_and(|v| v.loaders.iter().any(|l| l == "datapack"));
+        let path = f["path"].as_str().unwrap_or_default();
+        if let (true, Some((parent, _))) = (datapack, path.rsplit_once('/')) {
+            *counts.entry(parent.to_string()).or_default() += 1;
+        }
+    }
+    counts
+        .into_iter()
+        .max_by_key(|(_, n)| *n)
+        .and_then(|(folder, _)| crate::ptype::datapack_folder(&folder))
 }
 
 fn side_from_env(client: &str, server: &str) -> String {

@@ -10,6 +10,7 @@ use crate::cache::Cache;
 
 const API: &str = "https://api.modrinth.com";
 use crate::USER_AGENT;
+use ts_rs::TS;
 const MAX_CONCURRENT: usize = 8;
 const FETCH_RETRIES: usize = 4;
 
@@ -27,6 +28,18 @@ pub struct Modrinth {
     version_by_id: Arc<Mutex<HashMap<String, Version>>>,
     semaphore: Arc<Semaphore>,
     cache: Arc<Cache>,
+}
+
+impl Modrinth {
+    pub fn forget_cached(&self) -> std::io::Result<()> {
+        if let Ok(mut versions) = self.version_cache.lock() {
+            versions.clear();
+        }
+        if let Ok(mut versions) = self.version_by_id.lock() {
+            versions.clear();
+        }
+        self.cache.clear_all()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,9 +81,9 @@ pub struct Project {
     pub description: String,
     pub icon_url: Option<String>,
     pub project_type: String,
-    #[serde(default = "required")]
+    #[serde(default = "crate::util::required")]
     pub client_side: String,
-    #[serde(default = "required")]
+    #[serde(default = "crate::util::required")]
     pub server_side: String,
     #[serde(default)]
     pub loaders: Vec<String>,
@@ -80,6 +93,16 @@ pub struct Project {
     pub team: String,
     #[serde(default)]
     pub organization: Option<String>,
+}
+
+impl Project {
+    pub fn is_datapack(&self) -> bool {
+        self.loaders.iter().any(|l| l == "datapack")
+            && self
+                .loaders
+                .iter()
+                .all(|l| l == "datapack" || l == "minecraft")
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -106,8 +129,9 @@ struct TeamUser {
     avatar_url: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "types.ts")]
 pub struct ModMeta {
     pub project_id: String,
     pub icon_url: Option<String>,
@@ -115,18 +139,15 @@ pub struct ModMeta {
     pub author_icon_url: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "types.ts")]
 pub struct VersionInfo {
     pub id: String,
     pub version_number: String,
     pub version_type: String,
     pub date_published: String,
     pub game_versions: Vec<String>,
-}
-
-fn required() -> String {
-    "required".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -172,6 +193,8 @@ pub struct Version {
     pub files: Vec<VersionFile>,
     #[serde(default)]
     pub date_published: String,
+    #[serde(default)]
+    pub changelog: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -199,12 +222,11 @@ struct LoaderEntry {
     stable: bool,
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "types.ts")]
 pub struct LoaderVersions {
     pub versions: Vec<String>,
-    pub recommended: Option<String>,
-    pub kind: String,
 }
 
 impl Modrinth {
@@ -226,10 +248,7 @@ impl Modrinth {
         self.cache.set_dir(dir);
     }
 
-    async fn execute(
-        &self,
-        builder: reqwest::RequestBuilder,
-    ) -> Result<reqwest::Response> {
+    async fn execute(&self, builder: reqwest::RequestBuilder) -> Result<reqwest::Response> {
         let _permit = self.semaphore.clone().acquire_owned().await.ok();
         let mut attempt = 0usize;
         loop {
@@ -275,9 +294,7 @@ impl Modrinth {
         } else {
             format!("[[\"project_type:{project_type}\"],[\"versions:{game_version}\"]]")
         };
-        let cache_key = format!(
-            "{query}|{game_version}|{loader}|{project_type}|{offset}|{limit}"
-        );
+        let cache_key = format!("{query}|{game_version}|{loader}|{project_type}|{offset}|{limit}");
         if let Some(hits) = self
             .cache
             .get::<Vec<SearchHit>>("search", &cache_key, TTL_SEARCH)
@@ -313,9 +330,7 @@ impl Modrinth {
                 return Ok(versions);
             }
         }
-        if let Some(versions) =
-            self.cache.get::<Vec<Version>>("projver", &key, TTL_LIST)
-        {
+        if let Some(versions) = self.cache.get::<Vec<Version>>("projver", &key, TTL_LIST) {
             self.version_cache
                 .lock()
                 .unwrap()
@@ -360,6 +375,21 @@ impl Modrinth {
         Ok(version)
     }
 
+    pub async fn version_changelog(&self, id: &str) -> Result<String> {
+        if let Some(text) = self.version(id).await?.changelog {
+            return Ok(text);
+        }
+        let url = format!("{API}/v2/version/{id}");
+        let resp = self.execute(self.client.get(&url)).await?;
+        let version: Version = resp.json().await?;
+        self.cache.put("version", id, &version);
+        self.version_by_id
+            .lock()
+            .unwrap()
+            .insert(id.to_string(), version.clone());
+        Ok(version.changelog.unwrap_or_default())
+    }
+
     pub async fn project(&self, id: &str) -> Result<Project> {
         if let Some(p) = self.cache.get::<Project>("project", id, TTL_META) {
             return Ok(p);
@@ -371,10 +401,7 @@ impl Modrinth {
         Ok(project)
     }
 
-    pub async fn versions_by_hashes(
-        &self,
-        hashes: &[String],
-    ) -> Result<HashMap<String, Version>> {
+    pub async fn versions_by_hashes(&self, hashes: &[String]) -> Result<HashMap<String, Version>> {
         if hashes.is_empty() {
             return Ok(HashMap::new());
         }
@@ -445,8 +472,7 @@ impl Modrinth {
             .filter(|t| !t.is_empty())
             .collect();
         let teams = self.teams_bulk(&team_ids).await.unwrap_or_default();
-        let mut owner: HashMap<String, (String, Option<String>)> =
-            HashMap::new();
+        let mut owner: HashMap<String, (String, Option<String>)> = HashMap::new();
         for team in &teams {
             if team.is_empty() {
                 continue;
@@ -457,10 +483,7 @@ impl Modrinth {
                 .find(|m| m.role.eq_ignore_ascii_case("owner"))
                 .or_else(|| team.first());
             if let Some(m) = member {
-                owner.insert(
-                    tid,
-                    (m.user.username.clone(), m.user.avatar_url.clone()),
-                );
+                owner.insert(tid, (m.user.username.clone(), m.user.avatar_url.clone()));
             }
         }
         let org_ids: Vec<String> = projects
@@ -505,8 +528,7 @@ impl Modrinth {
         game_version: &str,
         loader: Option<&str>,
     ) -> Result<Vec<VersionInfo>> {
-        let mut versions =
-            self.project_versions(id, game_version, loader).await?;
+        let mut versions = self.project_versions(id, game_version, loader).await?;
         versions.sort_by(|a, b| b.date_published.cmp(&a.date_published));
         Ok(versions
             .into_iter()
@@ -520,10 +542,7 @@ impl Modrinth {
             .collect())
     }
 
-    pub async fn game_versions(
-        &self,
-        include_snapshots: bool,
-    ) -> Result<Vec<String>> {
+    pub async fn game_versions(&self, include_snapshots: bool) -> Result<Vec<String>> {
         let tags: Vec<(String, String)> = match self
             .cache
             .get::<Vec<(String, String)>>("gamever", "all", TTL_TAGS)
@@ -548,11 +567,7 @@ impl Modrinth {
             .collect())
     }
 
-    pub async fn loader_versions(
-        &self,
-        loader: &str,
-        minecraft: &str,
-    ) -> Result<LoaderVersions> {
+    pub async fn loader_versions(&self, loader: &str, minecraft: &str) -> Result<LoaderVersions> {
         let path = match loader {
             "fabric" => "fabric",
             "quilt" => "quilt",
@@ -567,9 +582,7 @@ impl Modrinth {
         {
             Some(v) => v,
             None => {
-                let url = format!(
-                    "https://launcher-meta.modrinth.com/{path}/v0/manifest.json"
-                );
+                let url = format!("https://launcher-meta.modrinth.com/{path}/v0/manifest.json");
                 let resp = self.execute(self.client.get(&url)).await?;
                 let manifest: LoaderManifest = resp.json().await?;
                 let entry = manifest
@@ -583,44 +596,25 @@ impl Modrinth {
                             .find(|g| g.id == "${modrinth.gameVersion}")
                     });
                 let versions: Vec<(String, bool)> = entry
-                    .map(|e| {
-                        e.loaders
-                            .iter()
-                            .map(|l| (l.id.clone(), l.stable))
-                            .collect()
-                    })
+                    .map(|e| e.loaders.iter().map(|l| (l.id.clone(), l.stable)).collect())
                     .unwrap_or_default();
                 self.cache.put("loaders", &cache_key, &versions);
                 versions
             }
         };
-        let stable = versions.iter().find(|(_, s)| *s).map(|(id, _)| id);
-        let (recommended, kind) = match stable {
-            Some(id) => (Some(id.clone()), "stable"),
-            None => (
-                versions.first().map(|(id, _)| id.clone()),
-                if versions.is_empty() { "" } else { "latest" },
-            ),
-        };
         Ok(LoaderVersions {
             versions: versions.into_iter().map(|(id, _)| id).collect(),
-            recommended,
-            kind: kind.into(),
         })
     }
 
-    pub async fn versions_from_hashes(
-        &self,
-        sha1_hashes: &[String],
-    ) -> Result<HashMap<String, Version>> {
-        if sha1_hashes.is_empty() {
-            return Ok(HashMap::new());
+    pub async fn curseforge_fingerprint(&self, sha1: &str, url: &str) -> Option<u32> {
+        if let Some(print) = self.cache.get::<u32>("fingerprint", sha1, 0) {
+            return Some(print);
         }
-        let url = format!("{API}/v2/version_files");
-        let body =
-            serde_json::json!({ "hashes": sha1_hashes, "algorithm": "sha1" });
-        let resp = self.execute(self.client.post(&url).json(&body)).await?;
-        Ok(resp.json().await?)
+        let bytes = self.download(url).await.ok()?;
+        let print = crate::curseforge::cf_fingerprint(&bytes);
+        self.cache.put("fingerprint", sha1, &print);
+        Some(print)
     }
 
     pub async fn download(&self, url: &str) -> Result<Vec<u8>> {
@@ -628,22 +622,10 @@ impl Modrinth {
         Ok(resp.bytes().await?.to_vec())
     }
 
-    pub fn forget_versions(
-        &self,
-        project_id: &str,
-        game_version: &str,
-        loader: Option<&str>,
-    ) {
-        let key =
-            format!("{project_id}|{game_version}|{}", loader.unwrap_or(""));
-        self.version_cache.lock().unwrap().remove(&key);
-        self.cache.remove("projver", &key);
-    }
-
-    pub fn clear_version_cache(&self) {
+    pub fn clear_version_cache(&self) -> std::io::Result<()> {
         self.version_cache.lock().unwrap().clear();
         self.version_by_id.lock().unwrap().clear();
-        self.cache.clear("projver");
-        self.cache.clear("search");
+        self.cache.clear("projver")?;
+        self.cache.clear("search")
     }
 }
