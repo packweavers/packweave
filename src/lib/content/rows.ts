@@ -7,7 +7,7 @@ import type {
 	ProjectType,
 	ProviderId,
 } from '@/lib/tauri/types'
-import { providerName, sideName } from '@/lib/util/format'
+import { providerName, sideDetail } from '@/lib/util/format'
 
 import type { ContentChange } from './changes'
 
@@ -36,6 +36,12 @@ export const FILTER_LABELS: Record<ContentFilter, string> = {
 	pinned: 'Pinned',
 }
 
+export interface RowSide {
+	client: boolean
+	server: boolean
+	label: string
+}
+
 export interface ContentRow {
 	id: string
 	mod: LockedMod | null
@@ -47,7 +53,7 @@ export interface ContentRow {
 	name: string
 	version: string
 	update: AvailableUpdate | null
-	side: string
+	side: RowSide | null
 	source: string
 	otherSources: string[]
 	usedBy: string[]
@@ -95,7 +101,11 @@ function modRow(mod: LockedMod, input: RowInputs): ContentRow {
 		name: mod.name,
 		version: source?.versionNumber ?? '',
 		update: input.updates[mod.key] ?? null,
-		side: sideName(mod.clientSide, mod.serverSide),
+		side: {
+			client: mod.clientSide !== 'unsupported',
+			server: mod.serverSide !== 'unsupported',
+			label: sideDetail(mod.clientSide, mod.serverSide),
+		},
 		source: providerName(mod.preferred),
 		otherSources: linked.filter((p) => p !== mod.preferred).map(providerName),
 		usedBy: mod.dependents.map((id) => input.nameOf(id) ?? id),
@@ -123,7 +133,7 @@ function removedRow(item: ItemChange): ContentRow {
 		name: item.name,
 		version: item.fromVersion ?? '',
 		update: null,
-		side: '',
+		side: null,
 		source: providerName(item.fromProvider),
 		otherSources: [],
 		usedBy: [],
@@ -134,9 +144,10 @@ function removedRow(item: ItemChange): ContentRow {
 	}
 }
 
-function sideOf(file: LocalContent): string {
-	if (file.meta?.side === 'client') return 'Client'
-	return file.meta?.side === 'server' ? 'Server' : '—'
+function sideOf(file: LocalContent): RowSide | null {
+	if (file.meta?.side === 'client') return { client: true, server: false, label: 'Client only' }
+	if (file.meta?.side === 'server') return { client: false, server: true, label: 'Server only' }
+	return null
 }
 
 function localRow(file: LocalContent): ContentRow {

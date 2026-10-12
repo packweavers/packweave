@@ -4,6 +4,7 @@
 	import { isPlatform, platformPage, PLATFORMS, type Platform } from '@/lib/content/sources'
 	import { versionLoader } from '@/lib/content/types'
 	import { findSource, removeContent, toggleDisabled } from '@/lib/flows/content'
+	import { Table } from '@/lib/state/columns.svelte'
 	import { content } from '@/lib/state/content.svelte'
 	import { selection } from '@/lib/state/selection.svelte'
 	import { tabs, type Doc } from '@/lib/state/tabs.svelte'
@@ -14,8 +15,9 @@
 	import { modConfigs } from '@/lib/tauri/files'
 	import type { ProjectDetails, ProviderId, VersionInfo } from '@/lib/tauri/types'
 	import { openExternal } from '@/lib/tauri/windows'
-	import { ago, providerName, sideName } from '@/lib/util/format'
+	import { ago, providerName, sideDetail } from '@/lib/util/format'
 	import Author from '@/ui/Author.svelte'
+	import ColumnHead from '@/ui/ColumnHead.svelte'
 	import Empty from '@/ui/Empty.svelte'
 	import ModIcon from '@/ui/ModIcon.svelte'
 	import { pending } from '@/ui/pending'
@@ -43,6 +45,12 @@
 			: '',
 	)
 
+	const versionsTable = new Table('versions', [
+		{ id: 'version', label: 'Version', width: 200, min: 100 },
+		{ id: 'channel', label: 'Channel', width: 90, min: 56, hide: 2 },
+		{ id: 'date', label: 'Published', width: 140, min: 72, hide: 1 },
+		{ id: 'state', label: '', min: 64 },
+	])
 	let details = $state<ProjectDetails | null>(null)
 	let versionList = $state<VersionInfo[]>([])
 	let showBetas = $state(ws.manifest?.channel !== 'release')
@@ -155,7 +163,7 @@
 							icon={content.meta[mod.projectId].authorIconUrl}
 						/> ·
 					{/if}
-					{sideName(mod.clientSide, mod.serverSide)} · {providerName(mod.preferred)}
+					{sideDetail(mod.clientSide, mod.serverSide)} · {providerName(mod.preferred)}
 					{#if change}<span class="tag {change}">{change}</span>{/if}
 					{#if mod.dependencyType === 'dependency'}<span class="tag">dependency</span>{/if}
 				</span>
@@ -176,25 +184,25 @@
 					><input type="checkbox" class="switch" bind:checked={showBetas} />Betas</label
 				>
 			</div>
-			<div class="thead">
-				<span class="c-version">Version</span>
-				<span class="c-channel">Channel</span>
-				<span class="c-date">Published</span>
-				<span class="c-state"></span>
-			</div>
+			<ColumnHead table={versionsTable} sticky={false} />
 			{#each shownVersions as version (version.id)}
 				{@const current = version.id === source?.versionId}
 				<button
 					class="trow"
+					style={versionsTable.style}
 					class:selected={preview === version.id}
 					onclick={() => choose(version)}
 				>
-					<span class="c-version mono">{version.versionNumber}</span>
-					<span class="c-channel" class:changed={version.versionType !== 'release'}
-						>{version.versionType}</span
-					>
-					<span class="c-date">{ago(version.datePublished)}</span>
-					<span class="c-state">
+					<span class="mono ellipsis">{version.versionNumber}</span>
+					{#if versionsTable.has('channel')}
+						<span class="ellipsis" class:changed={version.versionType !== 'release'}
+							>{version.versionType}</span
+						>
+					{/if}
+					{#if versionsTable.has('date')}
+						<span class="ellipsis">{ago(version.datePublished)}</span>
+					{/if}
+					<span class="ellipsis">
 						{#if current}<span class="tag">in pack</span>{:else if preview === version.id}<span
 								class="tag info">preview</span
 							>{/if}
@@ -367,22 +375,6 @@
 	.trow {
 		width: 100%;
 		text-align: left;
-	}
-
-	.c-version {
-		flex: 0 0 200px;
-	}
-
-	.c-channel {
-		flex: 0 0 90px;
-	}
-
-	.c-date {
-		flex: 0 0 140px;
-	}
-
-	.c-state {
-		flex: 1;
 	}
 
 	.c-platform {

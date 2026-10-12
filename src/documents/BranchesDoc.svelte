@@ -4,11 +4,13 @@
 	import { newBranch, openBranch } from '@/lib/flows/branches'
 	import { fetch, pull } from '@/lib/flows/git'
 	import { branchMenu } from '@/lib/menus'
+	import { Table } from '@/lib/state/columns.svelte'
 	import { git } from '@/lib/state/git.svelte'
 	import { menus } from '@/lib/state/menus.svelte'
 	import { selection } from '@/lib/state/selection.svelte'
 	import type { Doc } from '@/lib/state/tabs.svelte'
 	import { instanceFolderName, shortenHome } from '@/lib/util/path'
+	import ColumnHead from '@/ui/ColumnHead.svelte'
 	import { pending } from '@/ui/pending'
 
 	interface Props {
@@ -17,6 +19,13 @@
 
 	let { doc }: Props = $props()
 
+	const table = new Table('branches', [
+		{ id: 'branch', label: 'Branch', width: 180, min: 90 },
+		{ id: 'window', label: 'Window', min: 160 },
+		{ id: 'remote', label: 'Remote', width: 90, min: 64, hide: 1 },
+		{ id: 'instance', label: 'Instance', width: 140, min: 70, hide: 2 },
+		{ id: 'last', label: 'Last', width: 90, min: 56, hide: 3 },
+	])
 	const selected = $derived(selection.of(doc.id)[0] ?? null)
 
 	onMount(() => {
@@ -48,19 +57,14 @@
 	{/if}
 	<button class="btn primary" onclick={pending(newBranch)}>New branch…</button>
 </div>
-<div class="thead">
-	<span class="c-branch">Branch</span>
-	<span class="c-window">Window</span>
-	<span class="c-remote">Remote</span>
-	<span class="c-instance">Instance</span>
-	<span class="c-last">Last</span>
-</div>
 <div class="scroll">
+	<ColumnHead {table} />
 	{#each git.locals as branch (branch.name)}
 		{@const tree = git.worktreeFor(branch.name)}
 		{@const open = tree ? git.windowFor(tree.path) : undefined}
 		<div
 			class="trow"
+			style={table.style}
 			class:selected={selected === branch.name}
 			role="option"
 			aria-selected={selected === branch.name}
@@ -69,8 +73,8 @@
 			ondblclick={() => void openBranch(branch.name)}
 			oncontextmenu={(e) => menus.at(e, branchMenu(branch.name))}
 		>
-			<span class="c-branch mono ellipsis">{branch.name}</span>
-			<span class="c-window ellipsis">
+			<span class="mono ellipsis">{branch.name}</span>
+			<span class="c-window">
 				{#if tree}
 					<span class="mono small ellipsis">{shortenHome(tree.path)}</span>
 					<span class="tag">{branch.current ? 'this window' : open ? 'open' : 'closed'}</span>
@@ -78,11 +82,17 @@
 					<span class="small">no folder yet</span>
 				{/if}
 			</span>
-			<span class="c-remote mono small">
-				{#if branch.upstream}↑{branch.ahead} ↓{branch.behind}{:else}local only{/if}
-			</span>
-			<span class="c-instance ellipsis">{instanceName(tree?.instance ?? null)}</span>
-			<span class="c-last small">{branch.last?.replace(/ ago$/, '') ?? ''}</span>
+			{#if table.has('remote')}
+				<span class="mono small ellipsis">
+					{#if branch.upstream}↑{branch.ahead} ↓{branch.behind}{:else}local only{/if}
+				</span>
+			{/if}
+			{#if table.has('instance')}
+				<span class="ellipsis">{instanceName(tree?.instance ?? null)}</span>
+			{/if}
+			{#if table.has('last')}
+				<span class="small ellipsis">{branch.last?.replace(/ ago$/, '') ?? ''}</span>
+			{/if}
 		</div>
 	{/each}
 	{#if git.remoteOnly.length > 0}
@@ -90,6 +100,7 @@
 		{#each git.remoteOnly as branch (branch.name)}
 			<div
 				class="trow"
+				style={table.style}
 				class:selected={selected === branch.name}
 				role="option"
 				aria-selected={selected === branch.name}
@@ -98,38 +109,24 @@
 				ondblclick={() => void openBranch(branch.name)}
 				oncontextmenu={(e) => menus.at(e, branchMenu(branch.name))}
 			>
-				<span class="c-branch mono ellipsis">{branch.name}</span>
-				<span class="c-window ellipsis"><span class="small">no folder yet</span></span>
-				<span class="c-remote mono small">remote only</span>
-				<span class="c-instance ellipsis">none</span>
-				<span class="c-last small">{branch.last?.replace(/ ago$/, '') ?? ''}</span>
+				<span class="mono ellipsis">{branch.name}</span>
+				<span class="c-window"><span class="small">no folder yet</span></span>
+				{#if table.has('remote')}<span class="mono small ellipsis">remote only</span>{/if}
+				{#if table.has('instance')}<span class="ellipsis">none</span>{/if}
+				{#if table.has('last')}
+					<span class="small ellipsis">{branch.last?.replace(/ ago$/, '') ?? ''}</span>
+				{/if}
 			</div>
 		{/each}
 	{/if}
 </div>
 
 <style>
-	.c-branch {
-		flex: 0 0 180px;
-	}
-
 	.c-window {
-		flex: 1 1 260px;
 		display: flex;
 		align-items: center;
 		gap: 8px;
 		min-width: 0;
-	}
-
-	.c-remote {
-		flex: 0 0 90px;
-	}
-
-	.c-instance {
-		flex: 0 0 140px;
-	}
-
-	.c-last {
-		flex: 0 0 90px;
+		overflow: hidden;
 	}
 </style>

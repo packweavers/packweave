@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { ArrowUp, Pin, Search, X } from '@lucide/svelte'
+	import { ArrowUp, Monitor, Pin, Search, Server, X } from '@lucide/svelte'
 	import { tick, untrack } from 'svelte'
 
 	import {
@@ -19,6 +19,7 @@
 	} from '@/lib/flows/content'
 	import { clickSelect, keySelect, type ListSelection } from '@/lib/listselect'
 	import { contentMenu, localMenu } from '@/lib/menus'
+	import { Table } from '@/lib/state/columns.svelte'
 	import { content } from '@/lib/state/content.svelte'
 	import { contentView } from '@/lib/state/contentview.svelte'
 	import { menus } from '@/lib/state/menus.svelte'
@@ -28,6 +29,7 @@
 	import type { ProjectType } from '@/lib/tauri/types'
 	import { typeName } from '@/lib/util/format'
 	import Author from '@/ui/Author.svelte'
+	import ColumnHead from '@/ui/ColumnHead.svelte'
 	import Empty from '@/ui/Empty.svelte'
 	import Icon from '@/ui/Icon.svelte'
 	import ModIcon from '@/ui/ModIcon.svelte'
@@ -47,6 +49,17 @@
 		anchor: null,
 		cursor: null,
 	})
+	const table = new Table(
+		'content',
+		[
+			{ id: 'name', label: 'Name', min: 200 },
+			{ id: 'version', label: 'Version', width: 140, min: 70, hide: 1 },
+			{ id: 'side', label: 'Side', width: 56, min: 40, hide: 2 },
+			{ id: 'source', label: 'Source', width: 110, min: 64, hide: 3 },
+			{ id: 'usedBy', label: 'Used by', width: 160, min: 64, hide: 4 },
+		],
+		{ gap: 16, left: 20, right: 16 },
+	)
 	let searchInput = $state<HTMLInputElement | null>(null)
 	let listElement = $state<HTMLDivElement | null>(null)
 
@@ -209,94 +222,110 @@
 			<button class="btn" onclick={pending(() => pasteList())}>Paste a list…</button>
 		</Empty>
 	{:else}
-		<div class="grid head">
-			<span>Name</span>
-			<span>Version</span>
-			<span>Side</span>
-			<span>Source</span>
-			<span>Used by</span>
-		</div>
-		<div
-			bind:this={listElement}
-			class="scroll list"
-			role="listbox"
-			aria-multiselectable="true"
-			tabindex="0"
-			{onkeydown}
-		>
-			{#each rows as row (row.id)}
-				<div
-					class="grid row"
-					data-id={row.id}
-					class:selected={list.selected.includes(row.id)}
-					class:cursor={list.cursor === row.id && list.selected.length > 1}
-					role="option"
-					aria-selected={list.selected.includes(row.id)}
-					tabindex="-1"
-					onclick={(e) => onrowclick(row, e)}
-					ondblclick={() => open(row)}
-					oncontextmenu={(e) => oncontextmenu(row, e)}
-				>
-					{#if row.change}<span class="mark {row.change}"></span>{/if}
-					<span class="cell-name">
-						<ModIcon url={row.icon} size={32} />
-						<span class="lines">
-							<span class="line">
-								<span class="name">{row.name}</span>
-								{#each row.words as word (word)}
-									<span class="tag" class:removed={word === 'removed'}>{word}</span>
-								{/each}
-								{#if row.problem}<span class="tag changed">problem</span>{/if}
+		<div class="scroll">
+			<ColumnHead {table} />
+			<div
+				bind:this={listElement}
+				class="list"
+				role="listbox"
+				aria-multiselectable="true"
+				tabindex="0"
+				{onkeydown}
+			>
+				{#each rows as row (row.id)}
+					<div
+						class="row"
+						style={table.style}
+						data-id={row.id}
+						class:selected={list.selected.includes(row.id)}
+						class:cursor={list.cursor === row.id && list.selected.length > 1}
+						role="option"
+						aria-selected={list.selected.includes(row.id)}
+						tabindex="-1"
+						onclick={(e) => onrowclick(row, e)}
+						ondblclick={() => open(row)}
+						oncontextmenu={(e) => oncontextmenu(row, e)}
+					>
+						{#if row.change}<span class="mark {row.change}"></span>{/if}
+						<span class="cell-name">
+							<ModIcon url={row.icon} size={32} />
+							<span class="lines">
+								<span class="line">
+									<span class="name">{row.name}</span>
+									{#if row.words.length > 0 || row.problem}
+										<span class="words"
+											>({#each row.words as word, i (word)}{#if i > 0}{', '}{/if}<span
+													class:removed={word === 'removed'}>{word}</span
+												>{/each}{#if row.problem}{#if row.words.length > 0}{', '}{/if}<span
+													class="problem">problem</span
+												>{/if})</span
+										>
+									{/if}
+								</span>
+								<span class="line sub">
+									{#if row.author}
+										<Author name={row.author} icon={row.authorIcon} />
+									{:else if row.local}
+										<span class="mono ellipsis">{row.local.filename}</span>
+									{:else if row.removed}
+										<span>removed from the pack</span>
+									{/if}
+								</span>
 							</span>
-							<span class="line sub">
-								{#if row.author}
-									<Author name={row.author} icon={row.authorIcon} />
-								{:else if row.local}
-									<span class="mono ellipsis">{row.local.filename}</span>
-								{:else if row.removed}
-									<span>removed from the pack</span>
+						</span>
+						{#if table.has('version')}
+							<span class="lines">
+								<span class="text mono" title={row.mod?.pinned ? 'Pinned' : row.version}
+									>{#if row.mod?.pinned}<Icon icon={Pin} size={12} />{/if}{row.version || '—'}</span
+								>
+								{#if row.update}
+									<span class="text mono sub update" title={row.update.versionNumber}
+										><Icon icon={ArrowUp} size={12} />{row.update.versionNumber}</span
+									>
 								{/if}
 							</span>
-						</span>
-					</span>
-					<span class="lines">
-						<span class="text mono" title={row.mod?.pinned ? 'Pinned' : row.version}
-							>{#if row.mod?.pinned}<Icon icon={Pin} size={12} />{/if}{row.version || '—'}</span
-						>
-						{#if row.update}
-							<span class="text mono sub update" title={row.update.versionNumber}
-								><Icon icon={ArrowUp} size={12} />{row.update.versionNumber}</span
+						{/if}
+						{#if table.has('side')}
+							<span class="side" title={row.side?.label}>
+								{#if row.side?.client}<Icon icon={Monitor} size={14} />{/if}
+								{#if row.side?.server}<Icon icon={Server} size={14} />{/if}
+								{#if !row.side?.client && !row.side?.server}<span class="hint">—</span>{/if}
+							</span>
+						{/if}
+						{#if table.has('source')}
+							<span class="ellipsis" title={[row.source, ...row.otherSources].join(', ')}
+								>{row.source}{#if row.otherSources.length > 0}<span class="hint"
+										>{` +${row.otherSources.length}`}</span
+									>{/if}</span
 							>
 						{/if}
-					</span>
-					<span class="ellipsis">{row.side}</span>
-					<span class="ellipsis"
-						>{row.source}{#each row.otherSources as other (other)}<span class="hint">
-								· {other}</span
-							>{/each}</span
-					>
-					<span class="ellipsis">{row.usedBy.length ? row.usedBy.join(', ') : '—'}</span>
-					{#if row.removed || row.update}
-						<span class="actions">
-							{#if row.removed}
-								<button
-									class="btn"
-									onclick={(e) => rowAction(e, () => restoreRemoved(row.removed!.path))}
-									>Restore</button
-								>
-							{:else if row.update}
-								<button class="btn" onclick={(e) => rowAction(e, () => updateContent([row.id]))}
-									>Update</button
-								>
-							{/if}
-						</span>
-					{/if}
-				</div>
-			{:else}
-				<Empty title="Nothing matches">
-					<button class="btn" onclick={clearFilter}>Clear filter</button>
-				</Empty>
-			{/each}
+						{#if table.has('usedBy')}
+							<span class="ellipsis" title={row.usedBy.join(', ')}
+								>{row.usedBy.length ? row.usedBy.join(', ') : '—'}</span
+							>
+						{/if}
+						{#if row.removed || row.update}
+							<span class="actions">
+								{#if row.removed}
+									<button
+										class="btn"
+										onclick={(e) => rowAction(e, () => restoreRemoved(row.removed!.path))}
+										>Restore</button
+									>
+								{:else if row.update}
+									<button class="btn" onclick={(e) => rowAction(e, () => updateContent([row.id]))}
+										>Update</button
+									>
+								{/if}
+							</span>
+						{/if}
+					</div>
+				{:else}
+					<Empty title="Nothing matches">
+						<button class="btn" onclick={clearFilter}>Clear filter</button>
+					</Empty>
+				{/each}
+			</div>
 		</div>
 	{/if}
 {/if}
@@ -323,26 +352,11 @@
 		outline: none;
 	}
 
-	.grid {
-		display: grid;
-		grid-template-columns: minmax(0, 2fr) minmax(150px, 1fr) 112px 112px minmax(0, 180px);
-		column-gap: 16px;
-		align-items: center;
-		padding: 0 16px 0 20px;
-	}
-
-	.head {
-		flex: none;
-		height: var(--row);
-		background: var(--band);
-		border-bottom: 1px solid var(--line);
-		font-size: 12.5px;
-		font-weight: 600;
-	}
-
 	.row {
 		position: relative;
+		align-items: center;
 		height: 48px;
+		scroll-margin-top: var(--row);
 		border-bottom: 1px solid var(--line);
 		font-size: 13.5px;
 		white-space: nowrap;
@@ -387,9 +401,36 @@
 	}
 
 	.name {
+		flex: 0 1 auto;
+		min-width: 48px;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		font-weight: 500;
+	}
+
+	.words {
+		flex: 0 100 auto;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		color: var(--grey);
+		font-size: 12px;
+	}
+
+	.words .removed {
+		color: var(--red);
+	}
+
+	.words .problem {
+		color: var(--yellow);
+	}
+
+	.side {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		min-width: 0;
+		overflow: hidden;
 	}
 
 	.sub {

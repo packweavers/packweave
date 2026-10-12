@@ -15,7 +15,7 @@
 	import { ws } from '@/lib/state/workspace.svelte'
 	import { versions as loadVersions } from '@/lib/tauri/catalog'
 	import type { LockedMod, ProviderId, VersionInfo } from '@/lib/tauri/types'
-	import { listNames, providerName, sideName } from '@/lib/util/format'
+	import { listNames, providerName, sideDetail } from '@/lib/util/format'
 	import Icon from '@/ui/Icon.svelte'
 	import IconButton from '@/ui/IconButton.svelte'
 	import ModIcon from '@/ui/ModIcon.svelte'
@@ -118,7 +118,7 @@
 	<section class="inspector-section">
 		<div class="band">Details</div>
 		<div class="kv">
-			<span class="k">Side</span><span class="v">{sideName(mod.clientSide, mod.serverSide)}</span>
+			<span class="k">Side</span><span class="v">{sideDetail(mod.clientSide, mod.serverSide)}</span>
 		</div>
 		<div class="kv">
 			<span class="k">File</span><span class="v mono">{source?.filename ?? '—'}</span>

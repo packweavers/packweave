@@ -113,6 +113,22 @@ export function typeName(type: ProjectType, many = false): string {
 	return TYPES[type][many ? 1 : 0]
 }
 
+export function sideDetail(clientSide: string, serverSide: string): string {
+	const client = clientSide !== 'unsupported'
+	const server = serverSide !== 'unsupported'
+	if (client && server) {
+		if (clientSide === 'optional' && serverSide === 'optional') {
+			return 'Client and server, optional on both'
+		}
+		if (clientSide === 'optional') return 'Client and server, optional on client'
+		if (serverSide === 'optional') return 'Client and server, optional on server'
+		return 'Client and server'
+	}
+	if (client) return 'Client only'
+	if (server) return 'Server only'
+	return 'Neither'
+}
+
 export function sideName(clientSide: string, serverSide: string): string {
 	const client = clientSide !== 'unsupported'
 	const server = serverSide !== 'unsupported'

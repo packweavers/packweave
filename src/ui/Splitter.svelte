@@ -7,9 +7,19 @@
 		invert?: boolean
 		onchange?: (value: number) => void
 		ondone?: () => void
+		onreset?: () => void
 	}
 
-	let { axis, value = $bindable(), min, max, invert = false, onchange, ondone }: Props = $props()
+	let {
+		axis,
+		value = $bindable(),
+		min,
+		max,
+		invert = false,
+		onchange,
+		ondone,
+		onreset,
+	}: Props = $props()
 
 	let dragging = $state(false)
 
@@ -42,6 +52,7 @@
 	role="separator"
 	aria-orientation={axis === 'x' ? 'vertical' : 'horizontal'}
 	{onpointerdown}
+	ondblclick={onreset}
 ></div>
 
 <style>
