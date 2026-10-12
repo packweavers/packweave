@@ -39,6 +39,7 @@
 	import { menus } from '@/lib/state/menus.svelte'
 	import { tabs } from '@/lib/state/tabs.svelte'
 	import type { GitChange } from '@/lib/tauri/types'
+	import { plural } from '@/lib/util/format'
 	import Empty from '@/ui/Empty.svelte'
 	import Icon from '@/ui/Icon.svelte'
 	import IconButton from '@/ui/IconButton.svelte'
@@ -342,20 +343,21 @@
 				onclick={pending(commitMerge)}>Commit merge</button
 			>
 		{:else}
-			<div class="actions">
+			<div class="options">
 				<label class="check small"><input type="checkbox" bind:checked={amend} />Amend</label>
-				<span class="small">{included.length} of {total}</span>
 				<span class="spacer"></span>
-				<button
-					class="btn primary"
-					disabled={committing || !git.message.trim() || (included.length === 0 && !amend)}
-					aria-busy={committing}
-					onclick={submit}
+				<span class="small ellipsis">{included.length} of {plural(total, 'change', 'changes')}</span
 				>
-					Commit {included.length || ''}
-					<span class="keys">{keysFor('git.commit') ?? ''}</span>
-				</button>
 			</div>
+			<button
+				class="btn primary commit"
+				disabled={committing || !git.message.trim() || (included.length === 0 && !amend)}
+				aria-busy={committing}
+				onclick={submit}
+			>
+				Commit {included.length || ''}
+				<span class="keys">{keysFor('git.commit') ?? ''}</span>
+			</button>
 		{/if}
 		{#if git.remoteName && (ahead > 0 || behind > 0)}
 			<div class="sync">
@@ -433,23 +435,21 @@
 		box-shadow: inset 0 -2px 0 var(--focus);
 	}
 
-	.actions {
+	.options {
 		display: flex;
-		align-items: stretch;
+		align-items: center;
 		gap: 10px;
-		min-height: 36px;
-		padding-left: 14px;
+		min-height: 32px;
+		padding: 0 14px;
 		box-shadow: inset 0 1px 0 var(--line);
+		white-space: nowrap;
 	}
 
-	.actions > :is(label, span) {
-		align-self: center;
-	}
-
-	.actions .btn,
 	.commit {
+		width: 100%;
 		height: auto;
 		min-height: 36px;
+		justify-content: center;
 	}
 
 	.sync {
