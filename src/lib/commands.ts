@@ -34,6 +34,7 @@ import {
 	packFromInstance,
 } from '@/lib/flows/pack'
 import { closeDoc, moveToMainWindow, moveToNewWindow } from '@/lib/flows/tabs'
+import { pausedWhileRunning } from '@/lib/instance/items'
 import { registerCommands, type Command } from '@/lib/state/commands.svelte'
 import { content } from '@/lib/state/content.svelte'
 import { files } from '@/lib/state/files.svelte'
@@ -441,14 +442,16 @@ const instanceCommands: Command[] = [
 		id: 'instance.push',
 		title: 'Push to instance',
 		group: 'Instance',
-		when: () => instance.toPush.length > 0 && !instance.running,
+		when: () =>
+			instance.toPush.some((item) => !instance.running || !pausedWhileRunning(item, 'push')),
 		run: () => instance.push(),
 	},
 	{
 		id: 'instance.pull',
 		title: 'Pull from instance',
 		group: 'Instance',
-		when: () => instance.toPull.length > 0 && !instance.running,
+		when: () =>
+			instance.toPull.some((item) => !instance.running || !pausedWhileRunning(item, 'pull')),
 		run: () => instance.pull(),
 	},
 	{

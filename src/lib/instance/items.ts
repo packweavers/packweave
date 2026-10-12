@@ -117,6 +117,10 @@ export function syncItems(report: SyncReport | null): SyncItem[] {
 	]
 }
 
+export function pausedWhileRunning(item: SyncItem, direction: Direction): boolean {
+	return item.kind === 'mod' || (item.kind === 'env' && direction === 'push')
+}
+
 export function opsFor(items: SyncItem[], directions: Direction[]): SyncOp[] {
 	return items.map((item, i) => item.op(directions[i]))
 }

@@ -87,8 +87,11 @@ pub async fn apply_sync(
 ) -> Result<PackResolved, String> {
     let dir = PathBuf::from(&path);
     let instance = bound_instance(&dir)?;
-    if launch::running(&instance).is_some() {
-        return Err("Minecraft is running in this instance. Stop it first.".into());
+    let paused = ops
+        .iter()
+        .any(|op| op.target == "mod" || (op.target == "env" && op.direction == "push"));
+    if paused && launch::running(&instance).is_some() {
+        return Err("Minecraft is running in this instance. Close it to sync mods.".into());
     }
     let guard = lock_pack(&dir).await;
     let lock = lockfile::read(&dir).ok();

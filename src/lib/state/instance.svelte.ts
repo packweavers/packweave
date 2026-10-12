@@ -1,4 +1,11 @@
-import { coversKey, opsFor, syncItems, type Direction, type SyncItem } from '@/lib/instance/items'
+import {
+	coversKey,
+	opsFor,
+	pausedWhileRunning,
+	syncItems,
+	type Direction,
+	type SyncItem,
+} from '@/lib/instance/items'
 import { errorCode, errorText } from '@/lib/tauri/call'
 import * as api from '@/lib/tauri/instance'
 import type { DetectedInstance, Running, SyncIgnored, SyncReport } from '@/lib/tauri/types'
@@ -186,13 +193,22 @@ class InstanceState {
 		items: SyncItem[],
 		directions: Direction[],
 		label: string,
-		done: string,
+		done: (count: number) => string,
 	): Promise<boolean> {
 		const dir = ws.dir
 		if (!dir || items.length === 0) return false
 		if (bisect.active) {
 			toasts.info('Stop Find a broken mod first. It has mods turned off in this instance.')
 			return false
+		}
+		if (this.running) {
+			const allowed = items.map((item, i) => !pausedWhileRunning(item, directions[i]))
+			if (!allowed.includes(true)) {
+				toasts.info(`Close ${this.name} to sync mods`)
+				return false
+			}
+			items = items.filter((_, i) => allowed[i])
+			directions = directions.filter((_, i) => allowed[i])
 		}
 		this.applying = true
 		try {
@@ -202,7 +218,9 @@ class InstanceState {
 			content.apply(resolved)
 			void content.refreshHistory()
 			ws.changed()
-			toasts.show(done, [{ label: 'Undo', command: 'edit.undo', run: () => void content.undo() }])
+			toasts.show(done(items.length), [
+				{ label: 'Undo', command: 'edit.undo', run: () => void content.undo() },
+			])
 			return true
 		} catch (error) {
 			toasts.error(error)
@@ -214,22 +232,20 @@ class InstanceState {
 	}
 
 	push(items: SyncItem[] = this.toPush): Promise<boolean> {
-		const n = items.length
 		return this.apply(
 			items,
 			items.map(() => 'push'),
 			`Pushing to ${this.name}`,
-			`Pushed ${n} to ${this.name}`,
+			(n) => `Pushed ${n} to ${this.name}`,
 		)
 	}
 
 	pull(items: SyncItem[] = this.toPull): Promise<boolean> {
-		const n = items.length
 		return this.apply(
 			items,
 			items.map(() => 'pull'),
 			`Pulling from ${this.name}`,
-			`Pulled ${n} from ${this.name}`,
+			(n) => `Pulled ${n} from ${this.name}`,
 		)
 	}
 
@@ -239,7 +255,7 @@ class InstanceState {
 			reversible,
 			reversible.map((i) => (i.side === 'push' ? 'pull' : 'push')),
 			'Reverting',
-			`Reverted ${reversible.length}`,
+			(n) => `Reverted ${n}`,
 		)
 	}
 

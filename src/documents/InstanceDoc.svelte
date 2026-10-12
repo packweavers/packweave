@@ -8,6 +8,7 @@
 		coversKey,
 		folderEntry,
 		ignoreEntry,
+		pausedWhileRunning,
 		SIDE_WORDS,
 		type SyncItem,
 	} from '@/lib/instance/items'
@@ -40,8 +41,9 @@
 	let showIgnored = $state(false)
 
 	const selected = $derived(selection.of(doc.id)[0] ?? null)
-	const pushChecked = $derived(instance.toPush.filter((i) => !unchecked[i.key]))
-	const pullChecked = $derived(instance.toPull.filter((i) => !unchecked[i.key]))
+	const running = $derived(instance.running !== null)
+	const pushChecked = $derived(instance.toPush.filter((i) => !unchecked[i.key] && !paused(i)))
+	const pullChecked = $derived(instance.toPull.filter((i) => !unchecked[i.key] && !paused(i)))
 	const syncCount = $derived(pushChecked.length + pullChecked.length)
 	const ignoredRows = $derived(
 		instance.ignored.map((entry) => ({
@@ -58,6 +60,10 @@
 				unchecked[item.key] = true
 			}
 		}
+	}
+
+	function paused(item: SyncItem): boolean {
+		return running && item.side !== 'both' && pausedWhileRunning(item, item.side)
 	}
 
 	function checkState(items: SyncItem[]): 'all' | 'some' | 'none' {
@@ -88,7 +94,7 @@
 			items,
 			directions,
 			`Syncing ${instance.name}`,
-			`Synced ${items.length} with ${instance.name}`,
+			(n) => `Synced ${n} with ${instance.name}`,
 		)
 	}
 
@@ -191,7 +197,8 @@
 		{#if item.side !== 'both'}
 			<input
 				type="checkbox"
-				checked={!unchecked[item.key]}
+				checked={!unchecked[item.key] && !paused(item)}
+				disabled={paused(item)}
 				onclick={(e) => e.stopPropagation()}
 				onchange={(e) => check([item], e.currentTarget.checked)}
 			/>
@@ -366,7 +373,7 @@
 		>
 		<button
 			class="btn primary"
-			disabled={syncCount === 0 || instance.applying || instance.running !== null || bisect.active}
+			disabled={syncCount === 0 || instance.applying || bisect.active}
 			aria-busy={instance.applying}
 			onclick={syncChecked}
 		>
@@ -382,7 +389,7 @@
 	{/if}
 	{#if instance.running}
 		<div class="banner warn">
-			{instance.name} is running · Sync paused
+			{instance.name} is running · Mods paused
 		</div>
 	{/if}
 	{#if instance.missing}
