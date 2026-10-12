@@ -56,8 +56,12 @@ export async function updatePins(pins: VersionPin[]): Promise<void> {
 		await content.setVersions(pins)
 		return
 	}
-	const choice = await dialogs.open(UpdateDialog, { pins, impact })
-	if (choice === 'update') await content.setVersions(pins)
+	const choice = await dialogs.open(UpdateDialog, {
+		pins,
+		impact,
+		preview: (chosen: VersionPin[]) => previewChange(dir, { versions: chosen }),
+	})
+	if (choice) await content.setVersions(choice.pins)
 }
 
 export async function removeContent(keys: string[]): Promise<void> {

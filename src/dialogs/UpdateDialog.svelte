@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { ArrowUp, ChevronDown, ChevronRight } from '@lucide/svelte'
-	import { onMount } from 'svelte'
+	import { onMount, untrack } from 'svelte'
 
 	import UpdateNotes from '@/inspectors/UpdateNotes.svelte'
 	import { contentChange } from '@/lib/content/changes'
@@ -18,20 +18,54 @@
 	interface Props {
 		pins: VersionPin[]
 		impact: ImpactReport | null
-		close: (result?: 'update') => void
+		preview: (pins: VersionPin[]) => Promise<ImpactReport | null>
+		close: (result?: { pins: VersionPin[] }) => void
 	}
 
-	let { pins, impact, close }: Props = $props()
+	let { pins, impact, preview, close }: Props = $props()
 
 	let extraMeta = $state<Record<string, ModMeta>>({})
 	let open = $state<Record<string, boolean>>({})
+	let picked = $state<Record<string, boolean>>(
+		untrack(() => Object.fromEntries(pins.map((pin) => [pin.key, true]))),
+	)
+	let current = $state<ImpactReport | null>(untrack(() => impact))
+	let request = 0
+
+	const chosen = $derived(pins.filter((pin) => picked[pin.key]))
+	const all = $derived(chosen.length === pins.length)
+
+	$effect(() => {
+		const subset = chosen
+		const ticket = ++request
+		if (subset.length === pins.length) {
+			current = untrack(() => impact)
+			return
+		}
+		if (subset.length === 0) {
+			current = null
+			return
+		}
+		const timer = setTimeout(() => {
+			void preview(subset)
+				.then((report) => {
+					if (ticket === request) current = report
+				})
+				.catch(tasks.or('Checking what else changes', undefined))
+		}, 250)
+		return () => clearTimeout(timer)
+	})
+
+	function pickAll(on: boolean): void {
+		picked = Object.fromEntries(pins.map((pin) => [pin.key, on]))
+	}
 
 	const rows = $derived(
 		pins.map((pin) => {
 			const mod = content.find(pin.key)
 			const update = content.updates[pin.key]
 			const exact = update?.versionId === pin.version
-			const planned = impact?.changes.find((c) => c.key === pin.key)?.toVersion
+			const planned = current?.changes.find((c) => c.key === pin.key)?.toVersion
 			return {
 				id: pin.key,
 				projectId: mod?.projectId ?? pin.key,
@@ -44,8 +78,8 @@
 			}
 		}),
 	)
-	const asked = $derived(new Set(rows.map((r) => r.id)))
-	const extra = $derived((impact?.changes ?? []).filter((c) => !asked.has(c.key)))
+	const asked = $derived(new Set(chosen.map((pin) => pin.key)))
+	const extra = $derived((current?.changes ?? []).filter((c) => !asked.has(c.key)))
 	const title = $derived(
 		pins.length === 1 ? `Update ${rows[0].name}` : `Update ${plural(pins.length, 'mod', 'mods')}`,
 	)
@@ -74,25 +108,48 @@
 
 <Dialog {title} width={720} onclose={() => close()}>
 	<div class="list">
+		{#if pins.length > 1}
+			<label class="item all">
+				<input
+					type="checkbox"
+					checked={all}
+					indeterminate={chosen.length > 0 && !all}
+					onchange={(e) => pickAll(e.currentTarget.checked)}
+				/>
+				<span class="name">Select all</span>
+				<span class="spacer"></span>
+				<span class="small">{chosen.length} of {pins.length}</span>
+			</label>
+		{/if}
 		{#each rows as row (row.id)}
-			<div class="item">
-				<button class="head" onclick={() => toggle(row)} aria-expanded={!!open[row.id]}>
-					<ModIcon url={row.meta?.iconUrl} size={32} />
-					<span class="text">
-						<span class="name">{row.name}</span>
-						{#if row.meta?.author}<span class="small sub"
-								><Author name={row.meta.author} icon={row.meta.authorIconUrl} /></span
-							>{/if}
-					</span>
-					<span class="versions mono">
-						<span class="version" title={row.from}>{row.from}</span>
-						<span class="version update" title={row.to}
-							><Icon icon={ArrowUp} size={12} />{row.to}</span
-						>
-					</span>
-					{#if row.channel !== 'release'}<span class="tag changed">{row.channel}</span>{/if}
-					<Icon icon={open[row.id] ? ChevronDown : ChevronRight} size={14} />
-				</button>
+			<div class="item" class:off={!picked[row.id]}>
+				<div class="head">
+					{#if pins.length > 1}
+						<input
+							type="checkbox"
+							aria-label="Update {row.name}"
+							checked={picked[row.id]}
+							onchange={(e) => (picked[row.id] = e.currentTarget.checked)}
+						/>
+					{/if}
+					<button class="toggle" onclick={() => toggle(row)} aria-expanded={!!open[row.id]}>
+						<ModIcon url={row.meta?.iconUrl} size={32} />
+						<span class="text">
+							<span class="name">{row.name}</span>
+							{#if row.meta?.author}<span class="small sub"
+									><Author name={row.meta.author} icon={row.meta.authorIconUrl} /></span
+								>{/if}
+						</span>
+						<span class="versions mono">
+							<span class="version" title={row.from}>{row.from}</span>
+							<span class="version update" title={row.to}
+								><Icon icon={ArrowUp} size={12} />{row.to}</span
+							>
+						</span>
+						{#if row.channel !== 'release'}<span class="tag changed">{row.channel}</span>{/if}
+						<Icon icon={open[row.id] ? ChevronDown : ChevronRight} size={14} />
+					</button>
+				</div>
 				{#if open[row.id]}
 					<div class="notes">
 						<UpdateNotes projectId={row.projectId} version={row.version} expandAll />
@@ -139,13 +196,13 @@
 		</div>
 	{/if}
 
-	{#if impact && (impact.fixed.length > 0 || impact.problems.length > 0)}
+	{#if current && (current.fixed.length > 0 || current.problems.length > 0)}
 		<div class="band">Problems</div>
 		<div class="problems">
-			{#each impact.fixed as fixed (fixed)}
+			{#each current.fixed as fixed (fixed)}
 				<p><span class="tag added">✓ fixed</span> {fixed}</p>
 			{/each}
-			{#each impact.problems as problem (problem)}
+			{#each current.problems as problem (problem)}
 				<p><span class="tag removed">✗ new</span> {problem}</p>
 			{/each}
 		</div>
@@ -154,8 +211,11 @@
 	{#snippet footer()}
 		<span class="spacer"></span>
 		<button class="btn" onclick={() => close()}>Cancel</button>
-		<button class="btn primary" data-default onclick={() => close('update')}
-			>Update {pins.length}</button
+		<button
+			class="btn primary"
+			data-default
+			disabled={chosen.length === 0}
+			onclick={() => close({ pins: chosen })}>Update {chosen.length}</button
 		>
 	{/snippet}
 </Dialog>
@@ -179,8 +239,41 @@
 		text-align: left;
 	}
 
-	button.head:hover {
+	.head:has(> input) {
+		padding: 0 0 0 12px;
+	}
+
+	.toggle {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		min-height: 52px;
+		padding: 8px 12px 8px 0;
+		text-align: left;
+	}
+
+	.head:not(:has(> input)) > .toggle {
+		padding-left: 0;
+	}
+
+	.toggle:hover {
 		background: var(--hover);
+	}
+
+	.all {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		min-height: 36px;
+		padding: 0 12px;
+		background: var(--band);
+		cursor: pointer;
+	}
+
+	.off .toggle {
+		opacity: 0.5;
 	}
 
 	.text {
