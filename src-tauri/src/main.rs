@@ -58,30 +58,6 @@ pub const USER_AGENT: &str = concat!(
 );
 
 #[cfg(target_os = "linux")]
-fn dmabuf_is_broken() -> bool {
-    use std::path::Path;
-    if Path::new("/sys/module/nvidia").exists() || Path::new("/proc/driver/nvidia/version").exists()
-    {
-        return true;
-    }
-    if std::env::var_os("LIBGL_ALWAYS_SOFTWARE").is_some() {
-        return true;
-    }
-    [
-        "/sys/class/dmi/id/product_name",
-        "/sys/class/dmi/id/sys_vendor",
-    ]
-    .iter()
-    .filter_map(|p| std::fs::read_to_string(p).ok())
-    .any(|s| {
-        let s = s.to_lowercase();
-        ["virtualbox", "innotek", "vmware", "qemu", "parallels"]
-            .iter()
-            .any(|v| s.contains(v))
-    })
-}
-
-#[cfg(target_os = "linux")]
 fn dbus_session_available() -> bool {
     if std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_some() {
         return true;
@@ -114,7 +90,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
 fn main() {
     #[cfg(target_os = "linux")]
-    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() && dmabuf_is_broken() {
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
     }
 
