@@ -34,6 +34,7 @@ class GitState {
 	busy = $state<'push' | 'pull' | 'fetch' | null>(null)
 	excluded = $state<Record<string, boolean>>({})
 	message = $state('')
+	composing = $state(false)
 	focus = $state<string | null>(null)
 	branch = $derived(this.status?.branch ?? null)
 	head = $derived(this.status?.head ?? null)

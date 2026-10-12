@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { onMount } from 'svelte'
+
 	import { app } from '@/lib/state/app.svelte'
 	import { toasts } from '@/lib/state/toasts.svelte'
 	import Markdown from '@/ui/Markdown.svelte'
@@ -12,6 +14,10 @@
 		checking = false
 		checked = true
 	}
+
+	onMount(() => {
+		if (app.info?.canUpdate !== false && !app.update) void check()
+	})
 
 	async function install(): Promise<void> {
 		try {

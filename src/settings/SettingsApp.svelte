@@ -3,6 +3,7 @@
 	import { getCurrentWindow } from '@tauri-apps/api/window'
 	import { onMount } from 'svelte'
 
+	import { followSettingsMenu } from '@/lib/appmenu.svelte'
 	import { windowState } from '@/lib/state/window.svelte'
 	import { isMac } from '@/lib/util/platform'
 	import WindowControls from '@/shell/WindowControls.svelte'
@@ -38,11 +39,13 @@
 	onMount(() => {
 		if (!isMac) void getCurrentWindow().show()
 		const stopFollowing = windowState.follow()
+		const stopMenu = isMac ? followSettingsMenu() : null
 		const stop = getCurrentWebviewWindow().listen<string>('settings-page', (event) => {
 			if (PAGES.some((p) => p.id === event.payload)) page = event.payload as Page
 		})
 		return () => {
 			stopFollowing()
+			stopMenu?.()
 			void stop.then((unlisten) => unlisten())
 		}
 	})

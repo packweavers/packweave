@@ -19,6 +19,10 @@ export function registerCommands(list: Command[]): void {
 	for (const command of list) registry.set(command.id, command)
 }
 
+export function commandById(id: string): Command | undefined {
+	return registry.get(id)
+}
+
 export function allCommands(): Command[] {
 	return [...registry.values()]
 }

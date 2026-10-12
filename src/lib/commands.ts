@@ -406,6 +406,16 @@ const gitCommands: Command[] = [
 		run: () => tabs.open('branches'),
 	},
 	{
+		id: 'git.compose',
+		title: 'Commit…',
+		group: 'Git',
+		when: () => fullWindow() && git.isRepo,
+		run: () => {
+			git.composing = true
+			layout.showView('git')
+		},
+	},
+	{
 		id: 'git.push',
 		title: 'Push to origin',
 		group: 'Git',

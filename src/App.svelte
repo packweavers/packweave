@@ -3,6 +3,7 @@
 	import { getCurrentWindow } from '@tauri-apps/api/window'
 	import { onMount, untrack } from 'svelte'
 
+	import { followPackMenu } from '@/lib/appmenu.svelte'
 	import { dropFiles } from '@/lib/flows/content'
 	import { confirmUnsaved, importDropped } from '@/lib/flows/pack'
 	import { receiveTab } from '@/lib/flows/tabs'
@@ -46,6 +47,7 @@
 		const stopFollowing = windowState.follow()
 		const stopSyncing = ws.follow()
 		const stopPanels = panels.follow()
+		const stopMenu = isMac ? followPackMenu() : null
 		const view = getCurrentWebviewWindow()
 		const stops = [
 			view.listen<IncomingTab>('receive-tab', ({ payload }) =>
@@ -82,6 +84,7 @@
 			stopFollowing()
 			stopSyncing()
 			stopPanels()
+			stopMenu?.()
 			window.removeEventListener('online', online)
 			for (const stop of stops) void stop.then((unlisten) => unlisten())
 		}

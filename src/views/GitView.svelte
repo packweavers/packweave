@@ -51,6 +51,13 @@
 	let open = $state({ changes: true, branches: true, remotes: false, tags: false, stashes: false })
 	let collapsed = $state<Record<string, boolean>>({})
 	let amend = $state(false)
+	let messageBox = $state<HTMLTextAreaElement | null>(null)
+
+	$effect(() => {
+		if (!git.composing || !messageBox) return
+		git.composing = false
+		messageBox.focus()
+	})
 	let committing = $state(false)
 
 	const fileChanges = $derived(git.changes.filter((c) => !isContentPath(c.path)))
@@ -329,6 +336,7 @@
 
 	<div class="commit-box">
 		<textarea
+			bind:this={messageBox}
 			class="message"
 			rows="3"
 			placeholder={git.merging ? (git.merge?.note?.message ?? 'Merge') : 'Message'}
