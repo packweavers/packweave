@@ -58,6 +58,25 @@ impl ContentItem {
         self.sources.get(&self.preferred)
     }
 
+    fn absorb(&mut self, other: ContentItem) {
+        for (provider, source) in other.sources {
+            self.sources.entry(provider).or_insert(source);
+        }
+        self.explicit |= other.explicit;
+        self.pinned |= other.pinned;
+        self.no_bundle |= other.no_bundle;
+        for parent in other.dependents {
+            if !self.dependents.contains(&parent) {
+                self.dependents.push(parent);
+            }
+        }
+        for parent in other.optional_dependents {
+            if !self.optional_dependents.contains(&parent) {
+                self.optional_dependents.push(parent);
+            }
+        }
+    }
+
     pub fn project_id(&self) -> String {
         self.active()
             .and_then(|s| s.id.clone())
@@ -99,6 +118,46 @@ pub fn file_stem(item: &ContentItem) -> String {
     }
     let pref_slug = item.active().map(|s| s.slug.as_str()).unwrap_or("");
     slug_for(pref_slug, &item.name)
+}
+
+pub fn merge_same_files(items: Vec<ContentItem>) -> Vec<ContentItem> {
+    let mut order: Vec<usize> = (0..items.len()).collect();
+    order.sort_by_key(|&index| {
+        let item = &items[index];
+        (!item.explicit, std::cmp::Reverse(item.sources.len()))
+    });
+    let mut owner: HashMap<(bool, String), usize> = HashMap::new();
+    let mut moves: Vec<(usize, usize)> = Vec::new();
+    for index in order {
+        let item = &items[index];
+        let own: Vec<(bool, String)> = item
+            .sources
+            .values()
+            .filter_map(|s| s.sha1.clone())
+            .filter(|sha1| !sha1.is_empty())
+            .map(|sha1| (item.disabled, sha1))
+            .collect();
+        let target = own.iter().find_map(|key| owner.get(key).copied());
+        let keeper = target.unwrap_or(index);
+        if let Some(target) = target {
+            moves.push((index, target));
+        }
+        for key in own {
+            owner.entry(key).or_insert(keeper);
+        }
+    }
+    if moves.is_empty() {
+        return items;
+    }
+    let mut slots: Vec<Option<ContentItem>> = items.into_iter().map(Some).collect();
+    for (from, into) in moves {
+        if let Some(other) = slots[from].take() {
+            if let Some(target) = slots[into].as_mut() {
+                target.absorb(other);
+            }
+        }
+    }
+    slots.into_iter().flatten().collect()
 }
 
 pub fn without_duplicates(items: Vec<ContentItem>) -> Vec<ContentItem> {

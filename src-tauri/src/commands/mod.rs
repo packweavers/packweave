@@ -187,7 +187,8 @@ pub(crate) async fn resolve_held(
     _held: &PackGuard,
 ) -> anyhow::Result<PackResolved> {
     let manifest = manifest::read(dir)?;
-    let all = content::without_duplicates(content::read_all_checked(dir)?);
+    let all =
+        content::without_duplicates(content::merge_same_files(content::read_all_checked(dir)?));
     let authored: Vec<content::ContentItem> = all
         .iter()
         .filter(|i| i.explicit && !i.disabled)
@@ -224,6 +225,7 @@ pub(crate) async fn resolve_held(
         all.into_iter()
             .filter(|i| i.disabled && !resolved.contains(&i.project_id())),
     );
+    let mut combined = content::merge_same_files(combined);
     content::assign_files(&mut combined);
     content::write_resolved(dir, &manifest, &combined)?;
     let lockfile = Lockfile {
