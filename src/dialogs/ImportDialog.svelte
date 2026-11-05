@@ -25,14 +25,20 @@
 	let parent = $state('')
 	let useGit = $state(true)
 
-	const packwiz = $derived(basename(source).toLowerCase() === 'pack.toml')
+	const FORMATS: Record<string, string> = {
+		'pack.toml': 'packwiz',
+		'pakku.json': 'Pakku',
+		'pakku-lock.json': 'Pakku',
+	}
+
+	const format = $derived(FORMATS[basename(source).toLowerCase()] ?? null)
 	const stem = $derived(
-		packwiz ? basename(dirname(source)) : basename(source).replace(/\.(mrpack|zip)$/i, ''),
+		format ? basename(dirname(source)) : basename(source).replace(/\.(mrpack|zip)$/i, ''),
 	)
 
 	async function choose(): Promise<void> {
 		const picked = await pickFile('Choose a pack to import', [
-			{ name: 'Modpacks', extensions: ['mrpack', 'zip', 'toml'] },
+			{ name: 'Modpacks', extensions: ['mrpack', 'zip', 'toml', 'json'] },
 		])
 		if (picked) source = picked
 	}
@@ -45,10 +51,12 @@
 <Dialog title="Import a pack" onclose={() => close()}>
 	<button class="drop" onclick={choose}>
 		{#if source}
-			<span class="medium">{packwiz ? `${stem} (packwiz)` : basename(source)}</span>
+			<span class="medium">{format ? `${stem} (${format})` : basename(source)}</span>
 			<span class="small">Choose another</span>
 		{:else}
-			<span>.mrpack, CurseForge .zip, Prism / MultiMC .zip or a packwiz pack.toml</span>
+			<span
+				>.mrpack, CurseForge .zip, Prism / MultiMC .zip, packwiz pack.toml, or Pakku pakku-lock.json</span
+			>
 			<span class="small">Choose a file</span>
 		{/if}
 	</button>

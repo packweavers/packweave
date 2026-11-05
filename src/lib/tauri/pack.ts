@@ -1,5 +1,5 @@
 import { call } from './call'
-import type { Manifest, PackState, PackwizInfo } from './types'
+import type { ConvertInfo, Manifest, PackState } from './types'
 
 export function createPack(
 	dir: string,
@@ -31,12 +31,12 @@ export function clonePack(url: string, parent: string): Promise<PackState> {
 	return call('clone_pack', { url, destParent: parent })
 }
 
-export function packwizInfo(dir: string): Promise<PackwizInfo | null> {
-	return call('packwiz_info', { path: dir })
+export function convertInfo(dir: string): Promise<ConvertInfo | null> {
+	return call('convert_info', { path: dir })
 }
 
-export function convertPackwiz(dir: string): Promise<PackState> {
-	return call('convert_packwiz', { path: dir })
+export function convertPack(dir: string): Promise<PackState> {
+	return call('convert_pack', { path: dir })
 }
 
 export function saveManifest(dir: string, manifest: Manifest): Promise<void> {

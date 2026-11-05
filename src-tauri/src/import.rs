@@ -16,6 +16,8 @@ use crate::ptype::ProjectType;
 
 type Archive = zip::ZipArchive<std::fs::File>;
 
+const UNRECOGNIZED: &str = "Unrecognized pack. Expected a .mrpack, CurseForge .zip, Prism / MultiMC .zip, packwiz pack.toml, or Pakku pakku-lock.json.";
+
 pub async fn import_pack(
     mr: &Modrinth,
     cf: &CurseForge,
@@ -23,7 +25,15 @@ pub async fn import_pack(
     dest: &Path,
 ) -> Result<Manifest> {
     let file = std::fs::File::open(src)?;
-    let mut archive = zip::ZipArchive::new(file)?;
+    let named_archive = src
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("mrpack") || e.eq_ignore_ascii_case("zip"));
+    let mut archive = match zip::ZipArchive::new(file) {
+        Ok(archive) => archive,
+        Err(e) if named_archive => return Err(e.into()),
+        Err(_) => bail!(UNRECOGNIZED),
+    };
     let names: Vec<String> = (0..archive.len())
         .filter_map(|i| archive.by_index(i).ok().map(|f| f.name().to_string()))
         .collect();
@@ -37,7 +47,7 @@ pub async fn import_pack(
     {
         import_prism(mr, cf, &mut archive, dest).await
     } else {
-        bail!("Unrecognized pack. Expected a Modrinth (.mrpack), CurseForge (.zip), or Prism / MultiMC instance (.zip).")
+        bail!(UNRECOGNIZED)
     }
 }
 

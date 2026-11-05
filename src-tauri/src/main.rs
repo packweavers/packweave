@@ -7,6 +7,7 @@ mod classfile;
 mod commands;
 mod configs;
 mod content;
+mod convert;
 mod curseforge;
 mod dist;
 mod dropped;
@@ -31,6 +32,7 @@ mod packdiff;
 mod packignore;
 mod packlocal;
 mod packwiz;
+mod pakku;
 mod pathsafe;
 mod preserve;
 mod providers;
@@ -140,8 +142,8 @@ fn main() {
             commands::read_manifest,
             commands::pin_loader_version,
             commands::import_pack,
-            commands::packwiz_info,
-            commands::convert_packwiz,
+            commands::convert_info,
+            commands::convert_pack,
             commands::clone_pack,
             commands::save_manifest,
             commands::set_datapack_folder,

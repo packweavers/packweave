@@ -40,7 +40,9 @@ export type ContentItem = { name: string, side: string, explicit: boolean, disab
 
 export type ConvertCandidate = { id: string, slug: string, name: string, provider: ProviderId, iconUrl: string | null, author: string, authorIconUrl: string | null, version: string, };
 
-export type Converted = { content: number, files: number, unlocked: number, disabled: Array<string>, skipped: Array<string>, keptPackwiz: boolean, };
+export type ConvertInfo = { format: string, name: string, content: number, files: number, git: boolean, };
+
+export type Converted = { from: string, content: number, files: number, unlocked: number, disabled: Array<string>, excluded: Array<string>, skipped: Array<string>, keptSource: boolean, };
 
 export type DepType = "explicit" | "dependency";
 
@@ -131,8 +133,6 @@ export type PackFileChange = { status: string, path: string, };
 export type PackResolved = { manifest: Manifest, lockfile: Lockfile, validations: Array<Validation>, health: Health, suggested: Array<Suggested>, };
 
 export type PackState = { dir: string, manifest: Manifest, lockfile: Lockfile | null, converted?: Converted, warning?: string, };
-
-export type PackwizInfo = { name: string, content: number, files: number, git: boolean, };
 
 export type ProjectDetails = { id: string, slug: string, title: string, description: string, iconUrl: string | null, clientSide: string | null, serverSide: string | null, url: string, downloads: number, };
 

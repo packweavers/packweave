@@ -45,7 +45,7 @@ pub struct PackState {
     pub lockfile: Option<Lockfile>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub converted: Option<crate::packwiz::Converted>,
+    pub converted: Option<crate::convert::Converted>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub warning: Option<String>,

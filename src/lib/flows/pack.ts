@@ -15,14 +15,14 @@ import { init as gitInit } from '@/lib/tauri/git'
 import { bindInstance } from '@/lib/tauri/instance'
 import {
 	clonePack as clone,
-	convertPackwiz,
+	convertInfo,
+	convertPack,
 	createPack,
 	importPack as importFrom,
-	packwizInfo,
 	readManifest,
 	setDatapackFolder,
 } from '@/lib/tauri/pack'
-import type { Converted, PackState, PackwizInfo } from '@/lib/tauri/types'
+import type { Converted, ConvertInfo, PackState } from '@/lib/tauri/types'
 import { openPackWindow, pickFolder } from '@/lib/tauri/windows'
 import { plural } from '@/lib/util/format'
 import { basename, join } from '@/lib/util/path'
@@ -37,36 +37,50 @@ function reportConversion(name: string, converted: Converted | undefined): void 
 		plural(converted.files, 'file', 'files'),
 	]
 	if (converted.unlocked > 0) parts.push(`${converted.unlocked} unlocked for player edits`)
-	const notes = [`Converted ${name} from packwiz: ${parts.join(', ')}.`]
+	const notes = [`Converted ${name} from ${converted.from}: ${parts.join(', ')}.`]
 	if (converted.disabled.length > 0) {
 		notes.push(`Optional and off by default, so disabled: ${converted.disabled.join(', ')}.`)
 	}
+	if (converted.excluded.length > 0) {
+		notes.push(`Not included in Exports: ${converted.excluded.join(', ')}.`)
+	}
 	if (converted.skipped.length > 0) {
 		notes.push(`Skipped ${plural(converted.skipped.length, 'entry', 'entries')}, see Output.`)
-		for (const line of converted.skipped) tasks.note(`packwiz: ${line}`, 'error')
+		for (const line of converted.skipped) tasks.note(`${converted.from}: ${line}`, 'error')
 	}
 	toasts.show(notes.join(' '))
 }
 
-async function convertIfPackwiz(dir: string): Promise<boolean> {
-	let wiz: PackwizInfo | null
+const SOURCE_FILES: Record<string, string> = {
+	packwiz: 'pack.toml, index.toml, and the .pw.toml files',
+	Pakku: 'pakku.json, pakku-lock.json, and the files Pakku downloaded',
+}
+
+function convertMessage(info: ConvertInfo): string {
+	const items = plural(info.content, 'item', 'items')
+	const files = plural(info.files, 'file', 'files')
+	return info.git
+		? `packweave writes modpack.json and content/ for ${items}, moves ${files} into overrides/, and removes ${SOURCE_FILES[info.format] ?? `the ${info.format} files`}. Git keeps the ${info.format} version in its history.`
+		: `packweave adds modpack.json, content/, and overrides/ for ${items} and ${files}. The ${info.format} files stay as they are.`
+}
+
+async function convertIfNeeded(dir: string): Promise<boolean> {
+	let info: ConvertInfo | null
 	try {
-		wiz = await packwizInfo(dir)
+		info = await convertInfo(dir)
 	} catch (error) {
 		toasts.error(error)
 		return false
 	}
-	if (!wiz) return true
+	if (!info) return true
 	const ok = await dialogs.open(ConfirmDialog, {
-		title: `Convert ${wiz.name} from packwiz?`,
-		message: wiz.git
-			? `packweave writes modpack.json and content/ for ${plural(wiz.content, 'item', 'items')}, moves ${plural(wiz.files, 'file', 'files')} into overrides/ and removes pack.toml, index.toml and the .pw.toml files. Git keeps the packwiz version in its history.`
-			: `packweave adds modpack.json, content/ and overrides/ for ${plural(wiz.content, 'item', 'items')} and ${plural(wiz.files, 'file', 'files')}. The packwiz files stay as they are.`,
+		title: `Convert ${info.name} from ${info.format}?`,
+		message: convertMessage(info),
 		confirm: 'Convert',
 	})
 	if (!ok) return false
 	try {
-		const state = await tasks.run(`Converting ${wiz.name}`, () => convertPackwiz(dir))
+		const state = await tasks.run(`Converting ${info.name}`, () => convertPack(dir))
 		reportConversion(state.manifest.name, state.converted)
 		return true
 	} catch (error) {
@@ -76,7 +90,7 @@ async function convertIfPackwiz(dir: string): Promise<boolean> {
 }
 
 export async function openPackAt(dir: string, newWindow = false): Promise<void> {
-	if (!(await convertIfPackwiz(dir))) return
+	if (!(await convertIfNeeded(dir))) return
 	if (ws.isOpen || newWindow) {
 		const manifest = await readManifest(dir).catch((error) => {
 			toasts.error(error)
@@ -127,15 +141,21 @@ export async function importPack(source: string | null = null): Promise<void> {
 	}
 }
 
+const PACK_FILES: Record<string, string> = { packwiz: 'pack.toml', Pakku: 'pakku-lock.json' }
+
 export async function importDropped(paths: string[]): Promise<void> {
-	const file = paths.find((p) => /\.(mrpack|zip)$/i.test(p) || basename(p) === 'pack.toml')
+	const file = paths.find(
+		(p) =>
+			/\.(mrpack|zip)$/i.test(p) ||
+			[...Object.values(PACK_FILES), 'pakku.json'].includes(basename(p)),
+	)
 	if (file) return importPack(file)
 	for (const path of paths) {
-		const wiz = await packwizInfo(path).catch((error) => {
+		const info = await convertInfo(path).catch((error) => {
 			toasts.error(error)
 			return null
 		})
-		if (wiz) return importPack(join(path, 'pack.toml'))
+		if (info) return importPack(join(path, PACK_FILES[info.format] ?? 'pack.toml'))
 	}
 }
 

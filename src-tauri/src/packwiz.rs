@@ -1,16 +1,16 @@
 use anyhow::{anyhow, Context, Result};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use crate::content::{self, ContentItem};
+use crate::convert::{copy_docs, place, remove_empty_dirs, ConvertInfo, Converted};
 use crate::instance;
 use crate::lockfile::SourceFile;
 use crate::manifest::{self, Manifest};
 use crate::providers::ProviderId;
 use crate::ptype::{self, ProjectType};
-use ts_rs::TS;
 
 pub const PACK_FILE: &str = "pack.toml";
 
@@ -138,28 +138,6 @@ struct OptionInfo {
     default: bool,
 }
 
-#[derive(Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export, export_to = "types.ts")]
-pub struct PackwizInfo {
-    pub name: String,
-    pub content: usize,
-    pub files: usize,
-    pub git: bool,
-}
-
-#[derive(Serialize, Default, Clone, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export, export_to = "types.ts")]
-pub struct Converted {
-    pub content: usize,
-    pub files: usize,
-    pub unlocked: usize,
-    pub disabled: Vec<String>,
-    pub skipped: Vec<String>,
-    pub kept_packwiz: bool,
-}
-
 pub fn root_of(path: &Path) -> Option<PathBuf> {
     if path.is_file() {
         let named = path.file_name().is_some_and(|n| n == PACK_FILE);
@@ -174,11 +152,12 @@ pub fn is_packwiz(dir: &Path) -> bool {
     dir.join(PACK_FILE).is_file() && !manifest::path_for(dir).is_file()
 }
 
-pub fn info(dir: &Path) -> Result<PackwizInfo> {
+pub fn info(dir: &Path) -> Result<ConvertInfo> {
     let pack = read_pack(dir)?;
     let (_, index) = read_index(dir, &pack)?;
     let content = index.files.iter().filter(|f| f.metafile).count();
-    Ok(PackwizInfo {
+    Ok(ConvertInfo {
+        format: "packwiz".into(),
         name: pack.name,
         content,
         files: index.files.len() - content,
@@ -188,23 +167,23 @@ pub fn info(dir: &Path) -> Result<PackwizInfo> {
 
 fn read_pack(dir: &Path) -> Result<PackToml> {
     let text = std::fs::read_to_string(dir.join(PACK_FILE))
-        .with_context(|| format!("Could not read {PACK_FILE}"))?;
+        .with_context(|| format!("Couldn't read {PACK_FILE}"))?;
     toml::from_str(&text).map_err(|e| anyhow!("{PACK_FILE} isn't valid: {e}"))
 }
 
 fn read_index(dir: &Path, pack: &PackToml) -> Result<(PathBuf, IndexToml)> {
     let rel = crate::pathsafe::safe_zip_rel(&pack.index.file)
-        .ok_or_else(|| anyhow!("{PACK_FILE} points to an index outside the pack"))?;
+        .ok_or_else(|| anyhow!("{PACK_FILE} points to an index outside the pack."))?;
     let path = dir.join(rel);
     let text = std::fs::read_to_string(&path)
-        .with_context(|| format!("Could not read {}", pack.index.file))?;
+        .with_context(|| format!("Couldn't read {}", pack.index.file))?;
     let index: IndexToml =
         toml::from_str(&text).map_err(|e| anyhow!("{} isn't valid: {e}", pack.index.file))?;
     let base = path.parent().map(Path::to_path_buf).unwrap_or_default();
     Ok((base, index))
 }
 
-fn loader_of(versions: &BTreeMap<String, String>) -> (String, Option<String>) {
+pub(crate) fn loader_of(versions: &BTreeMap<String, String>) -> (String, Option<String>) {
     for loader in LOADERS {
         if let Some(version) = versions.get(loader) {
             return (
@@ -347,48 +326,6 @@ fn download(url: &str, out: &Path) -> Result<()> {
     Ok(())
 }
 
-fn place(from: &Path, to: &Path, moving: bool) -> Result<()> {
-    if let Some(parent) = to.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    if moving && std::fs::rename(from, to).is_ok() {
-        return Ok(());
-    }
-    std::fs::copy(from, to)?;
-    if moving {
-        std::fs::remove_file(from)?;
-    }
-    Ok(())
-}
-
-fn remove_empty_dirs(root: &Path, start: &Path) {
-    let mut dir = start.to_path_buf();
-    while dir.starts_with(root) && dir != root {
-        if std::fs::remove_dir(&dir).is_err() {
-            break;
-        }
-        match dir.parent() {
-            Some(parent) => dir = parent.to_path_buf(),
-            None => break,
-        }
-    }
-}
-
-fn copy_docs(src: &Path, dest: &Path, skipped: &mut Vec<String>) -> Result<()> {
-    for entry in std::fs::read_dir(src)?.flatten() {
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().to_string();
-        let lower = name.to_lowercase();
-        let doc = lower.ends_with(".md") || lower.starts_with("license");
-        if path.is_file() && doc && !dest.join(&name).exists() {
-            if let Err(e) = std::fs::copy(&path, dest.join(&name)) {
-                skipped.push(format!("{name}: couldn't copy it ({e})"));
-            }
-        }
-    }
-    Ok(())
-}
-
 pub fn convert(src: &Path, dest: &Path) -> Result<(Manifest, Converted)> {
     let in_place = crate::util::same_dir(src, dest);
     let moving = in_place && crate::git::is_repo(src);
@@ -399,7 +336,7 @@ pub fn convert(src: &Path, dest: &Path) -> Result<(Manifest, Converted)> {
         .get("minecraft")
         .cloned()
         .filter(|v| !v.is_empty())
-        .ok_or_else(|| anyhow!("{PACK_FILE} has no Minecraft version"))?;
+        .ok_or_else(|| anyhow!("{PACK_FILE} has no Minecraft version."))?;
     let (loader, loader_version) = loader_of(&pack.versions);
 
     let mut datapacks = pack
@@ -420,7 +357,8 @@ pub fn convert(src: &Path, dest: &Path) -> Result<(Manifest, Converted)> {
     std::fs::create_dir_all(dest)?;
     let overrides = instance::overrides_dir(dest);
     let mut report = Converted {
-        kept_packwiz: in_place && !moving,
+        from: "packwiz".into(),
+        kept_source: in_place && !moving,
         ..Default::default()
     };
     let mut unlocked: Vec<String> = Vec::new();
@@ -459,7 +397,7 @@ pub fn convert(src: &Path, dest: &Path) -> Result<(Manifest, Converted)> {
                         report.content += 1;
                     }
                     None => report.skipped.push(format!(
-                        "{}: no Modrinth, CurseForge or download link",
+                        "{}: no Modrinth, CurseForge, or download link",
                         meta.name
                     )),
                 },

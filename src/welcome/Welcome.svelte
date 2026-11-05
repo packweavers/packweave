@@ -33,7 +33,7 @@
 		},
 		{
 			title: 'Import a pack…',
-			detail: '.mrpack, CurseForge .zip, Prism or MultiMC, packwiz',
+			detail: '.mrpack, CurseForge .zip, Prism or MultiMC, packwiz, Pakku',
 			run: () => importPack(),
 			command: 'pack.import',
 		},
@@ -76,8 +76,8 @@
 				<div>
 					<h1 class="title-display">packweave</h1>
 					<p>
-						A Minecraft modpack IDE with git-native packs, Modrinth and CurseForge, two-way instance
-						sync, and one-click publishing.
+						A Minecraft modpack IDE with Git-native packs, Modrinth and CurseForge, two-way Instance
+						Sync, and one-click publishing
 					</p>
 				</div>
 			</header>
@@ -116,7 +116,7 @@
 					{#if keys}<span class="kbd">{keys}</span>{/if}
 				</button>
 			{/each}
-			<p class="hint small">Drop a .mrpack, .zip or packwiz pack to import</p>
+			<p class="hint small">Drop a .mrpack, .zip, packwiz, or Pakku pack to import</p>
 		</section>
 	</div>
 </div>

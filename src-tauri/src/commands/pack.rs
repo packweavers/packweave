@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use tauri::State;
 
+use crate::convert;
 use crate::curseforge::CurseForge;
 use crate::git;
 use crate::import;
@@ -8,7 +9,6 @@ use crate::instance;
 use crate::lockfile;
 use crate::manifest::{self, Manifest};
 use crate::modrinth::Modrinth;
-use crate::packwiz;
 use crate::ptype::Folders;
 use crate::undo::{self, Snapshot};
 
@@ -97,10 +97,10 @@ pub async fn import_pack(
 ) -> Result<PackState, String> {
     let dest_dir = PathBuf::from(&dest);
     let source = PathBuf::from(&src);
-    let (manifest, converted) = match packwiz::root_of(&source) {
+    let (manifest, converted) = match convert::root_of(&source) {
         Some(root) => {
             let target = dest_dir.clone();
-            let (manifest, report) = blocking(move || packwiz::convert(&root, &target)).await?;
+            let (manifest, report) = blocking(move || convert::convert(&root, &target)).await?;
             (manifest, Some(report))
         }
         None => (
@@ -122,26 +122,19 @@ pub async fn import_pack(
 }
 
 #[tauri::command]
-pub async fn packwiz_info(path: String) -> Result<Option<packwiz::PackwizInfo>, String> {
-    blocking(move || {
-        let dir = PathBuf::from(&path);
-        if !packwiz::is_packwiz(&dir) {
-            return Ok(None);
-        }
-        packwiz::info(&dir).map(Some)
-    })
-    .await
+pub async fn convert_info(path: String) -> Result<Option<convert::ConvertInfo>, String> {
+    blocking(move || convert::info(&PathBuf::from(&path))).await
 }
 
 #[tauri::command]
-pub async fn convert_packwiz(
+pub async fn convert_pack(
     mr: State<'_, Modrinth>,
     cf: State<'_, CurseForge>,
     path: String,
 ) -> Result<PackState, String> {
     let dir = PathBuf::from(&path);
     let target = dir.clone();
-    let (manifest, report) = blocking(move || packwiz::convert(&target, &target)).await?;
+    let (manifest, report) = blocking(move || convert::convert(&target, &target)).await?;
     instance::ensure_gitignore(&dir).map_err(es)?;
     instance::ensure_defaults(&dir).map_err(es)?;
     let _ = do_resolve(&mr, &cf, &dir).await;
@@ -193,15 +186,19 @@ pub async fn clone_pack(
             dest.file_name().and_then(|n| n.to_str()).unwrap_or("pack")
         ));
     }
-    if let Err(e) = git::clone(&url, &dest) {
+    let cloned = {
+        let (url, dest) = (url.clone(), dest.clone());
+        blocking(move || git::clone(&url, &dest)).await
+    };
+    if let Err(e) = cloned {
         let _ = std::fs::remove_dir_all(&dest);
-        return Err(es(e));
+        return Err(e);
     }
     let (manifest, converted) = match manifest::read(&dest) {
         Ok(m) => (m, None),
-        Err(_) if packwiz::is_packwiz(&dest) => {
+        Err(_) if convert::convertible(&dest) => {
             let target = dest.clone();
-            match blocking(move || packwiz::convert(&target, &target)).await {
+            match blocking(move || convert::convert(&target, &target)).await {
                 Ok((m, report)) => (m, Some(report)),
                 Err(e) => {
                     let _ = std::fs::remove_dir_all(&dest);
@@ -212,7 +209,7 @@ pub async fn clone_pack(
         Err(_) => {
             let _ = std::fs::remove_dir_all(&dest);
             return Err(
-                "This repository isn't a packweave or packwiz pack (no modpack.json or pack.toml)."
+                "This repository isn't a packweave, packwiz, or Pakku pack (no modpack.json, pack.toml, or pakku-lock.json)."
                     .into(),
             );
         }
