@@ -105,7 +105,7 @@ class Bisect {
 	): Promise<void> {
 		const gameDir = instance.binding?.gameDir
 		if (!gameDir) return
-		const ordered = mods.map((m) => m.file).filter((f) => suspects.includes(f))
+		const ordered = mods.map((m) => m.file).filter((f) => suspects.includes(f) && !keep.includes(f))
 		await this.#use(begin(gameDir, mods, original, ordered, keep))
 	}
 

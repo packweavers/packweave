@@ -66,7 +66,6 @@ export function enabledFor(session: BisectSession): Set<string> {
 		for (const file of session.found) {
 			for (const dependent of dependents(file, session.mods)) off.add(dependent)
 		}
-		for (const file of session.keep) off.delete(file)
 		return closure(
 			session.original.filter((f) => !off.has(f)),
 			session.mods,
@@ -77,14 +76,42 @@ export function enabledFor(session: BisectSession): Set<string> {
 	return closure([...base, ...session.testing, ...session.keep], session.mods)
 }
 
-function split(session: BisectSession, suspects: string[]): string[] {
-	const half = Math.ceil(suspects.length / 2)
-	const options = [suspects.slice(0, half), suspects.slice(half)]
-	for (const testing of options) {
-		const on = enabledFor({ ...session, suspects, testing, checking: false })
-		if (suspects.some((f) => !on.has(f)) && suspects.some((f) => on.has(f))) return testing
+function dependencyOrder(suspects: string[], mods: BisectMod[]): string[] {
+	const map = byFile(mods)
+	const wanted = new Set(suspects)
+	const placed = new Set<string>()
+	const out: string[] = []
+	const visit = (file: string, path: Set<string>): void => {
+		if (placed.has(file) || path.has(file)) return
+		path.add(file)
+		for (const dep of map.get(file)?.needs ?? []) {
+			if (wanted.has(dep)) visit(dep, path)
+		}
+		path.delete(file)
+		placed.add(file)
+		out.push(file)
 	}
-	return []
+	for (const file of suspects) visit(file, new Set())
+	return out
+}
+
+function split(session: BisectSession, suspects: string[]): string[] {
+	const ordered = dependencyOrder(suspects, session.mods)
+	let best: string[] = []
+	let bestGap = Infinity
+	for (let size = 1; size < ordered.length; size++) {
+		for (const testing of [ordered.slice(0, size), ordered.slice(size)]) {
+			const on = enabledFor({ ...session, suspects, testing, checking: false })
+			const count = suspects.filter((f) => on.has(f)).length
+			if (count === 0 || count === suspects.length) continue
+			const gap = Math.abs(suspects.length / 2 - count)
+			if (gap < bestGap) {
+				best = testing
+				bestGap = gap
+			}
+		}
+	}
+	return best
 }
 
 export function begin(

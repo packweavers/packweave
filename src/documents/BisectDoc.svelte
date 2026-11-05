@@ -112,9 +112,8 @@
 {:else if !session}
 	<div class="scroll page">
 		<p class="intro">
-			Half the suspects will be turned off in {instance.name}. Start the game from your launcher,
-			report if the problem persists. This repeats until you report the problem does not appear
-			anymore. Your instance is restored after.
+			Each round turns off half the suspects in {instance.name}. Start the game from your launcher
+			and report whether the problem still happens. {instance.name} is restored at the end.
 		</p>
 		{#if loading}
 			<div class="trow"><span class="spinner"></span></div>
