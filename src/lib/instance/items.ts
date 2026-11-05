@@ -58,6 +58,7 @@ function modItem(m: ModChange): SyncItem {
 			target: 'mod',
 			kind: m.kind,
 			direction,
+			key: m.key,
 			projectId: m.projectId ?? undefined,
 			slug: m.slug ?? undefined,
 			provider: m.provider ?? undefined,
@@ -82,7 +83,7 @@ function fileItem(f: FileChange): SyncItem {
 		side: f.side,
 		modified: f.modified,
 		ignored: f.ignored,
-		op: (direction) => ({ target: 'file', kind: f.kind, direction, path: f.path }),
+		op: (direction) => ({ target: 'file', kind: f.kind, direction, path: f.path, key: f.key }),
 	}
 }
 
@@ -104,7 +105,7 @@ function envItem(e: EnvChange): SyncItem {
 		side: e.side,
 		modified: null,
 		ignored: e.ignored,
-		op: (direction) => ({ target: 'env', kind: 'env', direction }),
+		op: (direction) => ({ target: 'env', kind: 'env', direction, key: e.key }),
 	}
 }
 
@@ -118,7 +119,7 @@ export function syncItems(report: SyncReport | null): SyncItem[] {
 }
 
 export function pausedWhileRunning(item: SyncItem, direction: Direction): boolean {
-	return item.kind === 'mod' || (item.kind === 'env' && direction === 'push')
+	return direction === 'push' && (item.kind === 'mod' || item.kind === 'env')
 }
 
 export function opsFor(items: SyncItem[], directions: Direction[]): SyncOp[] {

@@ -30,7 +30,8 @@
 	const task = $derived(tasks.current)
 	const more = $derived(tasks.running.length - 1)
 	const pushCount = $derived(instance.toPush.length)
-	const pullCount = $derived(instance.toPull.length + instance.both.length)
+	const pullCount = $derived(instance.toPull.length)
+	const bothCount = $derived(instance.both.length)
 	const runtime = $derived(instance.running ? duration(now - instance.running.started * 1000) : '')
 	const manifest = $derived(ws.manifest)
 
@@ -88,6 +89,15 @@
 			<button class="name link" onclick={review}>{instance.name}</button>
 			{#if instance.status === 'running'}
 				<span>running {runtime}</span>
+				{#if instance.toPull.length > 0 && !bisect.active}
+					<span>· {instance.toPull.length} to pull</span>
+					<button
+						class="btn"
+						disabled={instance.applying}
+						aria-busy={instance.applying}
+						onclick={() => runCommand('instance.pull')}>Pull</button
+					>
+				{/if}
 			{:else if bisect.active}
 				<span>finding a broken mod</span>
 				<button class="btn" onclick={() => tabs.open('bisect')}>Open</button>
@@ -113,8 +123,32 @@
 				>
 				<button class="btn" onclick={review}>Review</button>
 			{:else if instance.status === 'both'}
-				<span>{pushCount} to push · {pullCount} to pull</span>
-				<button class="btn" onclick={review}>Review</button>
+				<span
+					>{[
+						pushCount ? `${pushCount} to push` : '',
+						pullCount ? `${pullCount} to pull` : '',
+						bothCount ? `${bothCount} changed on both sides` : '',
+					]
+						.filter(Boolean)
+						.join(' · ')}</span
+				>
+				{#if pushCount > 0}
+					<button
+						class="btn"
+						disabled={instance.applying}
+						aria-busy={instance.applying}
+						onclick={() => runCommand('instance.push')}>Push</button
+					>
+				{/if}
+				{#if pullCount > 0}
+					<button
+						class="btn"
+						disabled={instance.applying}
+						aria-busy={instance.applying}
+						onclick={() => runCommand('instance.pull')}>Pull</button
+					>
+				{/if}
+				<button class="btn primary" onclick={review}>Review</button>
 			{:else if instance.status === 'in-sync'}
 				<span>in sync</span>
 			{:else}

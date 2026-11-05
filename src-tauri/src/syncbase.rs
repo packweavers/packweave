@@ -1,6 +1,6 @@
 use anyhow::Result;
 use sha1::{Digest, Sha1};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -13,12 +13,30 @@ pub fn set_dir(dir: PathBuf) {
 }
 
 fn file_for(pack_dir: &Path, instance: &Path) -> Option<PathBuf> {
+    named(pack_dir, instance, "json")
+}
+
+fn pulled_file(pack_dir: &Path, instance: &Path) -> Option<PathBuf> {
+    named(pack_dir, instance, "pulled.json")
+}
+
+fn named(pack_dir: &Path, instance: &Path, ext: &str) -> Option<PathBuf> {
     let mut hasher = Sha1::new();
     hasher.update(pack_dir.to_string_lossy().as_bytes());
     hasher.update(b"\n");
     hasher.update(instance.to_string_lossy().as_bytes());
-    let name = format!("{}.json", hex::encode(hasher.finalize()));
+    let name = format!("{}.{ext}", hex::encode(hasher.finalize()));
     DIR.get().map(|dir| dir.join(name))
+}
+
+pub fn files(pack_dir: &Path, instance: &Path) -> Vec<PathBuf> {
+    [
+        file_for(pack_dir, instance),
+        pulled_file(pack_dir, instance),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 pub fn load(pack_dir: &Path, instance: &Path) -> Baseline {
@@ -40,8 +58,39 @@ pub fn save(pack_dir: &Path, instance: &Path, baseline: &Baseline) -> Result<()>
 }
 
 pub fn forget(pack_dir: &Path, instance: &Path) -> Result<()> {
-    if let Some(path) = file_for(pack_dir, instance) {
+    for path in files(pack_dir, instance) {
         crate::util::delete_file(&path)?;
     }
     Ok(())
+}
+
+pub fn mark_pulled(pack_dir: &Path, instance: &Path, keys: &[String]) -> Result<()> {
+    let Some(path) = pulled_file(pack_dir, instance) else {
+        return Ok(());
+    };
+    let mut pulled = read_pulled(&path);
+    pulled.extend(keys.iter().filter(|k| !k.is_empty()).cloned());
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, serde_json::to_string(&pulled)?)?;
+    Ok(())
+}
+
+pub fn take_pulled(pack_dir: &Path, instance: &Path) -> BTreeSet<String> {
+    let Some(path) = pulled_file(pack_dir, instance) else {
+        return BTreeSet::new();
+    };
+    let pulled = read_pulled(&path);
+    if !pulled.is_empty() {
+        let _ = crate::util::delete_file(&path);
+    }
+    pulled
+}
+
+fn read_pulled(path: &Path) -> BTreeSet<String> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
 }

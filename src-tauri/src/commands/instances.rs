@@ -20,7 +20,7 @@ fn bound_instance(dir: &Path) -> Result<PathBuf, String> {
     packlocal::read(dir)
         .instance_dir
         .map(PathBuf::from)
-        .ok_or_else(|| "No instance linked".to_string())
+        .ok_or_else(|| "No instance is linked.".to_string())
 }
 
 #[tauri::command]
@@ -89,14 +89,17 @@ pub async fn apply_sync(
     let instance = bound_instance(&dir)?;
     let paused = ops
         .iter()
-        .any(|op| op.target == "mod" || (op.target == "env" && op.direction == "push"));
+        .any(|op| op.direction == "push" && (op.target == "mod" || op.target == "env"));
     if paused && launch::running(&instance).is_some() {
-        return Err("Minecraft is running in this instance. Close it to sync mods.".into());
+        return Err("Minecraft is running in this instance. Close it to push mods.".into());
     }
     let guard = lock_pack(&dir).await;
     let lock = lockfile::read(&dir).ok();
     let mut snapshot = Snapshot::pack(&dir, label);
-    for file in sync::affected_paths(&dir, &ops, lock.as_ref()) {
+    for file in sync::affected_paths(&dir, &ops, lock.as_ref())
+        .into_iter()
+        .chain(crate::syncbase::files(&dir, &instance))
+    {
         snapshot = snapshot.file(&file);
     }
     let result = async {
@@ -107,7 +110,14 @@ pub async fn apply_sync(
     }
     .await;
     undo::record(&dir, snapshot);
-    result.map_err(es)
+    let resolved = result.map_err(es)?;
+    let pulled: Vec<String> = ops
+        .iter()
+        .filter(|op| op.direction == "pull")
+        .filter_map(|op| op.key.clone())
+        .collect();
+    crate::syncbase::mark_pulled(&dir, &instance, &pulled).map_err(es)?;
+    Ok(resolved)
 }
 
 #[tauri::command]

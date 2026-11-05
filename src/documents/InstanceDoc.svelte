@@ -15,7 +15,7 @@
 	import { bisect } from '@/lib/state/bisect.svelte'
 	import { content } from '@/lib/state/content.svelte'
 	import { instance } from '@/lib/state/instance.svelte'
-	import { menus } from '@/lib/state/menus.svelte'
+	import { menus, type MenuEntry } from '@/lib/state/menus.svelte'
 	import { selection } from '@/lib/state/selection.svelte'
 	import { tabs, type Doc } from '@/lib/state/tabs.svelte'
 	import { toasts } from '@/lib/state/toasts.svelte'
@@ -71,10 +71,10 @@
 		return on === items.length ? 'all' : on === 0 ? 'none' : 'some'
 	}
 
-	function gitignore(item: SyncItem): void {
+	function gitignore(pattern: string): void {
 		const dir = ws.dir
-		if (!dir || !item.path) return
-		void addIgnorePatterns(dir, 'git', [`overrides/${item.path}`])
+		if (!dir) return
+		void addIgnorePatterns(dir, 'git', [pattern])
 			.then(() => {
 				ws.changed()
 				void instance.scan()
@@ -98,33 +98,74 @@
 		)
 	}
 
+	function gamePath(item: SyncItem): string | null {
+		if (item.path) return item.path
+		return item.key.startsWith('jar:') ? item.key.slice('jar:'.length) : null
+	}
+
+	function revealInGame(path: string): void {
+		const game = instance.binding?.gameDir
+		if (game) void reveal(join(game, path))
+	}
+
+	function syncEntries(items: SyncItem[], side: string): MenuEntry[] {
+		return [
+			...(side !== 'pull' ? [{ label: 'Push', run: () => void instance.push(items) }] : []),
+			...(side !== 'push' ? [{ label: 'Pull', run: () => void instance.pull(items) }] : []),
+			...(side !== 'both' ? [{ label: 'Revert', run: () => void instance.revert(items) }] : []),
+		]
+	}
+
 	function rowMenu(item: SyncItem, event: MouseEvent): void {
+		const path = gamePath(item)
 		menus.at(event, [
-			...(item.side !== 'pull' ? [{ label: 'Push', run: () => void instance.push([item]) }] : []),
-			...(item.side !== 'push' ? [{ label: 'Pull', run: () => void instance.pull([item]) }] : []),
-			...(item.side !== 'both'
-				? [{ label: 'Revert', run: () => void instance.revert([item]) }]
-				: []),
+			...(canOpen(item) ? [{ label: 'Open', run: () => openItem(item) }] : []),
+			...(path ? [{ label: `Show in ${instance.name}`, run: () => revealInGame(path) }] : []),
+			...(canOpen(item) || path ? ['separator' as const] : []),
+			...syncEntries([item], item.side),
 			'separator',
 			{
 				label: `Ignore for ${instance.name}`,
 				run: () => void instance.ignore([ignoreEntry(item)]),
 			},
-			...(item.path ? [{ label: 'Add to .gitignore', run: () => gitignore(item) }] : []),
+			...(item.path
+				? [{ label: 'Add to .gitignore', run: () => gitignore(`overrides/${item.path}`) }]
+				: []),
 		])
 	}
 
-	function folderMenu(path: string, event: MouseEvent): void {
+	function folderMenu(path: string, items: SyncItem[], side: string, event: MouseEvent): void {
 		menus.at(event, [
+			{ label: 'Open', run: () => void showPath(path, true) },
+			{ label: `Show in ${instance.name}`, run: () => revealInGame(path) },
+			'separator',
+			...syncEntries(items, side),
+			'separator',
 			{
 				label: `Ignore folder for ${instance.name}`,
 				run: () => void instance.ignore([folderEntry(path)]),
 			},
+			{ label: 'Add to .gitignore', run: () => gitignore(`overrides/${path}/`) },
 		])
 	}
 
 	function ignoredMenu(entry: SyncIgnored, event: MouseEvent): void {
-		menus.at(event, [{ label: 'Stop ignoring', run: () => void instance.unignore([entry.key]) }])
+		const path = entry.key.startsWith('file:')
+			? entry.key.slice('file:'.length).replace(/\/$/, '')
+			: entry.key.startsWith('jar:')
+				? entry.key.slice('jar:'.length)
+				: null
+		const folder = entry.key.endsWith('/')
+		menus.at(event, [
+			...(path
+				? [
+						{ label: 'Open', run: () => void showPath(path, folder) },
+						{ label: `Show in ${instance.name}`, run: () => revealInGame(path) },
+						'separator' as const,
+					]
+				: []),
+			{ label: 'Stop ignoring', run: () => void instance.unignore([entry.key]) },
+		])
 	}
 
 	function ignoredState(items: SyncItem[]): string {
@@ -173,6 +214,12 @@
 		collapsed[key] = !collapsed[key]
 	}
 
+	function changeCounts(items: SyncItem[]): [string, number][] {
+		const counts = new Map<string, number>()
+		for (const item of items) counts.set(item.change, (counts.get(item.change) ?? 0) + 1)
+		return [...counts]
+	}
+
 	function fileTree(items: SyncItem[]): TreeNode<SyncItem>[] {
 		return buildTree(
 			items.filter((i) => i.path),
@@ -218,10 +265,13 @@
 					}}>Open</button
 				>
 			{/if}
-			{#if item.side === 'both'}
+			{#if item.side !== 'pull'}
 				<button class="btn" onclick={(e) => act(e, () => instance.push([item]))}>Push</button>
+			{/if}
+			{#if item.side !== 'push'}
 				<button class="btn" onclick={(e) => act(e, () => instance.pull([item]))}>Pull</button>
-			{:else}
+			{/if}
+			{#if item.side !== 'both'}
 				<button class="btn" onclick={(e) => act(e, () => instance.revert([item]))}>Revert</button>
 			{/if}
 		</span>
@@ -244,7 +294,7 @@
 			tabindex="-1"
 			onclick={(e) => toggleFolder(e, key)}
 			ondblclick={(e) => showFolder(e, node.path)}
-			oncontextmenu={(e) => folderMenu(node.path, e)}
+			oncontextmenu={(e) => folderMenu(node.path, items, side, e)}
 		>
 			<span class="twisty"
 				><Icon icon={collapsed[key] ? ChevronRight : ChevronDown} size={12} /></span
@@ -259,13 +309,19 @@
 			{/if}
 			<span class="name">{node.name}/</span>
 			<span class="small">{plural(node.count, 'file', 'files')}</span>
+			{#each changeCounts(items) as [change, count] (change)}
+				<span class="tag {change}">{count} {change}</span>
+			{/each}
 			<span class="spacer"></span>
 			<span class="row-actions">
 				<button class="btn" onclick={(e) => act(e, () => showPath(node.path, true))}>Open</button>
-				{#if items.every((i) => i.side === 'both')}
+				{#if side !== 'pull'}
 					<button class="btn" onclick={(e) => act(e, () => instance.push(items))}>Push</button>
+				{/if}
+				{#if side !== 'push'}
 					<button class="btn" onclick={(e) => act(e, () => instance.pull(items))}>Pull</button>
-				{:else}
+				{/if}
+				{#if side !== 'both'}
 					<button class="btn" onclick={(e) => act(e, () => instance.revert(items))}>Revert</button>
 				{/if}
 			</span>
@@ -389,7 +445,7 @@
 	{/if}
 	{#if instance.running}
 		<div class="banner warn">
-			{instance.name} is running · Mods paused
+			{instance.name} is running · Pushing mods paused
 		</div>
 	{/if}
 	{#if instance.missing}

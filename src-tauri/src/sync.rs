@@ -40,6 +40,7 @@ pub enum Change {
 #[derive(Default, Clone)]
 struct Fingerprint {
     key: String,
+    alias: Option<String>,
     pack: Option<String>,
     inst: Option<String>,
     pack_file: Option<PathBuf>,
@@ -153,6 +154,9 @@ pub struct SyncOp {
     #[serde(default)]
     #[ts(as = "Option<ProjectType>", optional)]
     pub project_type: ProjectType,
+    #[serde(default)]
+    #[ts(optional)]
+    pub key: Option<String>,
 }
 
 struct InstHit<'a> {
@@ -174,9 +178,18 @@ struct PackIndex<'a> {
 impl<'a> PackIndex<'a> {
     fn build(enabled: &'a [LockedMod], disabled: &'a [LockedMod]) -> Self {
         let by_hash = |mods: &'a [LockedMod]| {
-            mods.iter()
+            let mut map: HashMap<&'a str, &'a LockedMod> = mods
+                .iter()
                 .filter_map(|m| m.sha1().filter(|s| !s.is_empty()).map(|s| (s, m)))
-                .collect()
+                .collect();
+            for m in mods {
+                for sha1 in m.sources.values().filter_map(|s| s.sha1.as_deref()) {
+                    if !sha1.is_empty() {
+                        map.entry(sha1).or_insert(m);
+                    }
+                }
+            }
+            map
         };
         let by_id = |mods: &'a [LockedMod]| {
             let mut map: HashMap<&'a str, &'a LockedMod> =
@@ -239,6 +252,21 @@ fn legacy_keys<'a>(mods: impl Iterator<Item = &'a LockedMod>) -> Vec<(String, St
         }
     }
     out
+}
+
+fn id_key(project_id: &str) -> String {
+    format!("id:{project_id}")
+}
+
+fn agree_mod(scan: &mut Scan<'_>, pm: &LockedMod) {
+    scan.agree(mod_key(&pm.key), pm.version_id().to_string());
+    for source in pm.sources.values() {
+        if let Some(id) = source.id.as_deref().filter(|id| !id.is_empty()) {
+            if !source.version_id.is_empty() {
+                scan.agree(id_key(id), source.version_id.clone());
+            }
+        }
+    }
 }
 
 fn jar_key(rel: &str) -> String {
@@ -325,13 +353,14 @@ pub async fn status(mr: &Modrinth, cf: &CurseForge, pack_dir: &Path) -> Result<S
     let (hits, mut matched) =
         identify_jars(mr, cf, &index, &inst_jars, &override_jars, &mut scan).await?;
     compare_hits(&hits, &index, &mut matched, &mut scan);
+    let manifest = manifest::read(pack_dir).ok();
     pack_only_changes(&enabled, &matched, &mut scan);
-    override_only_changes(&override_jars, &inst_jars, &mut scan);
+    override_only_changes(&override_jars, &inst_jars, manifest.as_ref(), &mut scan);
     name_instance_only(mr, cf, &mut scan.mods).await?;
     diff_files(&ignore, &mut scan);
-    let env = manifest::read(pack_dir)
-        .ok()
-        .and_then(|m| env_change(&m, &instance, &mut scan));
+    let env = manifest
+        .as_ref()
+        .and_then(|m| env_change(m, &instance, &mut scan));
 
     let Scan {
         mut mods,
@@ -345,6 +374,15 @@ pub async fn status(mr: &Modrinth, cf: &CurseForge, pack_dir: &Path) -> Result<S
         if let Some(value) = base.remove(old) {
             base.entry(new.clone()).or_insert(value);
         }
+    }
+    let pulled = syncbase::take_pulled(pack_dir, &instance);
+    let fingerprints = mods
+        .iter()
+        .map(|m| &m.fp)
+        .chain(files.iter().map(|f| &f.fp))
+        .chain(env.iter().map(|e| &e.fp));
+    for fp in fingerprints.filter(|fp| pulled.contains(&fp.key)) {
+        adopt_instance(&mut base, fp);
     }
     for m in mods.iter_mut() {
         m.side = classify(&m.fp, &base);
@@ -388,8 +426,27 @@ pub async fn status(mr: &Modrinth, cf: &CurseForge, pack_dir: &Path) -> Result<S
     })
 }
 
+fn adopt_instance(base: &mut Baseline, fp: &Fingerprint) {
+    let keys = std::iter::once(&fp.key).chain(fp.alias.as_ref());
+    match &fp.inst {
+        Some(value) => {
+            for key in keys {
+                base.insert(key.clone(), value.clone());
+            }
+        }
+        None => {
+            for key in keys {
+                base.remove(key);
+            }
+        }
+    }
+}
+
 fn classify(fp: &Fingerprint, base: &Baseline) -> Side {
-    if let Some(agreed) = base.get(&fp.key) {
+    let agreed = base
+        .get(&fp.key)
+        .or_else(|| fp.alias.as_ref().and_then(|alias| base.get(alias)));
+    if let Some(agreed) = agreed {
         let agreed = Some(agreed);
         if fp.pack.as_ref() == agreed {
             return Side::Pull;
@@ -402,14 +459,7 @@ fn classify(fp: &Fingerprint, base: &Baseline) -> Side {
     match (&fp.pack, &fp.inst) {
         (Some(_), None) => Side::Push,
         (None, Some(_)) => Side::Pull,
-        _ => {
-            let pack = fp.pack_file.as_deref().and_then(mtime);
-            let inst = fp.inst_file.as_deref().and_then(mtime);
-            match (pack, inst) {
-                (Some(p), Some(i)) if i > p => Side::Pull,
-                _ => Side::Push,
-            }
-        }
+        _ => Side::Both,
     }
 }
 
@@ -452,8 +502,10 @@ fn learn<'a>(
 ) -> Baseline {
     let mut next = Baseline::new();
     for fp in observed {
-        if let Some(value) = base.get(&fp.key) {
-            next.insert(fp.key.clone(), value.clone());
+        for key in std::iter::once(&fp.key).chain(fp.alias.as_ref()) {
+            if let Some(value) = base.get(key) {
+                next.insert(key.clone(), value.clone());
+            }
         }
     }
     for (key, value) in agreed {
@@ -496,7 +548,7 @@ async fn identify_jars<'a>(
     for im in inst_jars {
         if let Some(pm) = index.by_sha1.get(im.sha1.as_str()) {
             matched.insert(pm.project_id.clone());
-            scan.agree(mod_key(&pm.key), pm.version_id().to_string());
+            agree_mod(scan, pm);
             continue;
         }
         if let Some(dm) = index.disabled_by_sha1.get(im.sha1.as_str()) {
@@ -510,6 +562,7 @@ async fn identify_jars<'a>(
             } else {
                 let mut change = loose_jar_change("local_changed", im);
                 change.fp = Fingerprint {
+                    alias: None,
                     key: jar_key(&im.rel_path),
                     pack: Some(ov_sha.to_string()),
                     inst: Some(im.sha1.clone()),
@@ -544,6 +597,7 @@ async fn identify_jars<'a>(
         }
         let mut change = loose_jar_change("unknown", im);
         change.fp = Fingerprint {
+            alias: None,
             key: jar_key(&im.rel_path),
             pack: None,
             inst: Some(im.sha1.clone()),
@@ -571,8 +625,13 @@ fn compare_hits(
     for hit in hits {
         if let Some(pm) = index.by_project.get(hit.project_id.as_str()) {
             matched.insert(pm.project_id.clone());
-            if pm.version_id() == hit.version_id {
-                scan.agree(mod_key(&pm.key), hit.version_id.clone());
+            let same = pm.version_id() == hit.version_id
+                || pm
+                    .sources
+                    .get(&hit.provider)
+                    .is_some_and(|s| s.version_id == hit.version_id);
+            if same {
+                agree_mod(scan, pm);
                 continue;
             }
             let mut change = blank_mod("version_diff", pm.name.clone(), pm.project_type);
@@ -586,6 +645,7 @@ fn compare_hits(
             change.rel_path = Some(hit.im.rel_path.clone());
             change.dependency = is_dependency(pm);
             change.fp = Fingerprint {
+                alias: None,
                 key: mod_key(&pm.key),
                 pack: Some(pm.version_id().to_string()),
                 inst: Some(hit.version_id.clone()),
@@ -614,6 +674,7 @@ fn compare_hits(
         change.filename = Some(hit.im.filename.clone());
         change.rel_path = Some(hit.im.rel_path.clone());
         change.fp = Fingerprint {
+            alias: Some(id_key(&hit.project_id)),
             key: mod_key(&hit.project_id),
             pack: None,
             inst: Some(hit.version_id.clone()),
@@ -637,6 +698,7 @@ fn disabled_change(
     change.provider = Some(dm.preferred);
     change.instance_version = version;
     change.fp = Fingerprint {
+        alias: None,
         key: mod_key(&dm.key),
         pack: None,
         inst: Some(
@@ -666,6 +728,7 @@ fn pack_only_changes(enabled: &[LockedMod], matched: &HashSet<String>, scan: &mu
         change.filename = Some(pm.filename().to_string());
         change.dependency = is_dependency(pm);
         change.fp = Fingerprint {
+            alias: None,
             key: mod_key(&pm.key),
             pack: Some(pm.version_id().to_string()),
             inst: None,
@@ -679,15 +742,23 @@ fn pack_only_changes(enabled: &[LockedMod], matched: &HashSet<String>, scan: &mu
 fn override_only_changes(
     override_jars: &[InstanceMod],
     inst_jars: &[InstanceMod],
+    manifest: Option<&Manifest>,
     scan: &mut Scan<'_>,
 ) {
     let inst_paths: HashSet<&str> = inst_jars.iter().map(|m| m.rel_path.as_str()).collect();
-    for ov in override_jars
+    let server_only = |ov: &InstanceMod| {
+        manifest.is_some_and(|mf| {
+            instance::override_side(mf, &ov.rel_path, &scan.override_file(&ov.rel_path)) == "server"
+        })
+    };
+    let pushed: Vec<&InstanceMod> = override_jars
         .iter()
-        .filter(|ov| !inst_paths.contains(ov.rel_path.as_str()))
-    {
+        .filter(|ov| !inst_paths.contains(ov.rel_path.as_str()) && !server_only(ov))
+        .collect();
+    for ov in pushed {
         let mut change = loose_jar_change("local_only", ov);
         change.fp = Fingerprint {
+            alias: None,
             key: jar_key(&ov.rel_path),
             pack: Some(ov.sha1.clone()),
             inst: None,
@@ -760,6 +831,7 @@ fn diff_files(ignore: &SyncIgnore, scan: &mut Scan<'_>) {
         }
         let kind = if pack_sha.is_some() { "changed" } else { "new" };
         let fp = Fingerprint {
+            alias: None,
             key: file_key(&f.path),
             pack: pack_sha.map(str::to_string),
             inst: Some(f.sha1.clone()),
@@ -773,6 +845,7 @@ fn diff_files(ignore: &SyncIgnore, scan: &mut Scan<'_>) {
         .filter(|f| !inst_set.contains(f.path.as_str()))
     {
         let fp = Fingerprint {
+            alias: None,
             key: file_key(&f.path),
             pack: Some(f.sha1.clone()),
             inst: None,
@@ -830,6 +903,7 @@ fn env_change(manifest: &Manifest, instance: &Path, scan: &mut Scan<'_>) -> Opti
         key: String::new(),
         ignored: false,
         fp: Fingerprint {
+            alias: None,
             key: "env".into(),
             pack: Some(pack_value),
             inst: Some(inst_value),
@@ -898,7 +972,7 @@ pub fn apply_pull(pack_dir: &Path, ops: &[SyncOp]) -> Result<()> {
         .instance_dir
         .as_ref()
         .map(PathBuf::from)
-        .ok_or_else(|| anyhow!("No instance linked"))?;
+        .ok_or_else(|| anyhow!("No instance is linked."))?;
 
     for op in ops {
         match (op.target.as_str(), op.direction.as_str()) {
@@ -1001,7 +1075,7 @@ pub async fn apply_push(
         .instance_dir
         .as_ref()
         .map(PathBuf::from)
-        .ok_or_else(|| anyhow!("No instance linked"))?;
+        .ok_or_else(|| anyhow!("No instance is linked."))?;
     let folders = Folders::load(pack_dir);
 
     for op in ops {
@@ -1068,7 +1142,10 @@ async fn push_mod(mr: &Modrinth, instance: &Path, folders: &Folders, lm: &Locked
     if lm.download_url().is_empty() {
         return Ok(());
     }
-    let bytes = mr.download(lm.download_url()).await?;
+    let bytes = mr
+        .download(lm.download_url())
+        .await
+        .map_err(|e| anyhow!("Couldn't download {}: {e}", lm.name))?;
     let dir = instance.join(folders.install_dir(lm.project_type));
     std::fs::create_dir_all(&dir)?;
     std::fs::write(dir.join(lm.filename()), &bytes)?;
@@ -1110,7 +1187,7 @@ pub fn file_diff(pack_dir: &Path, rel: &str, kind: &str) -> Result<String> {
         .instance_dir
         .as_ref()
         .map(PathBuf::from)
-        .ok_or_else(|| anyhow!("No instance linked"))?;
+        .ok_or_else(|| anyhow!("No instance is linked."))?;
 
     let pack_text = read_text(&instance::overrides_dir(pack_dir).join(rel));
     let inst_text = read_text(&instance.join(rel));
@@ -1122,7 +1199,7 @@ pub fn file_diff(pack_dir: &Path, rel: &str, kind: &str) -> Result<String> {
     };
     let (old, new) = match (old, new) {
         (Some(o), Some(n)) => (o, n),
-        _ => return Ok("(binary or unreadable file, no text diff available)".into()),
+        _ => return Ok("(binary or unreadable file, no text diff)".into()),
     };
 
     let diff = TextDiff::from_lines(&old, &new);
@@ -1147,7 +1224,7 @@ pub fn file_diff(pack_dir: &Path, rel: &str, kind: &str) -> Result<String> {
         }
     }
     if out.is_empty() {
-        out.push_str("(no textual changes)\n");
+        out.push_str("(no text changes)\n");
     }
     Ok(out)
 }

@@ -9,11 +9,13 @@ import {
 import { errorCode, errorText } from '@/lib/tauri/call'
 import * as api from '@/lib/tauri/instance'
 import type { DetectedInstance, Running, SyncIgnored, SyncReport } from '@/lib/tauri/types'
+import { listNames } from '@/lib/util/format'
 
 import { app } from './app.svelte'
 import { bisect } from './bisect.svelte'
 import { content } from './content.svelte'
 import { panels } from './panels.svelte'
+import { tabs } from './tabs.svelte'
 import { tasks } from './tasks.svelte'
 import { toasts } from './toasts.svelte'
 import { ws } from './workspace.svelte'
@@ -39,6 +41,7 @@ class InstanceState {
 	#lastScan = 0
 	#runningTimer: ReturnType<typeof setInterval> | null = null
 	#logTimer: ReturnType<typeof setInterval> | null = null
+	#readingLog = false
 
 	get bound(): boolean {
 		return this.binding !== null
@@ -125,8 +128,8 @@ class InstanceState {
 		if (this.missing) return 'missing'
 		if (!this.report) return 'unknown'
 		const push = this.toPush.length > 0
-		const pull = this.toPull.length > 0 || this.both.length > 0
-		if (push && pull) return 'both'
+		const pull = this.toPull.length > 0
+		if ((push && pull) || this.both.length > 0) return 'both'
 		if (push) return 'push'
 		if (pull) return 'pull'
 		return 'in-sync'
@@ -204,13 +207,14 @@ class InstanceState {
 		if (this.running) {
 			const allowed = items.map((item, i) => !pausedWhileRunning(item, directions[i]))
 			if (!allowed.includes(true)) {
-				toasts.info(`Close ${this.name} to sync mods`)
+				toasts.info(`Close ${this.name} to push mods`)
 				return false
 			}
 			items = items.filter((_, i) => allowed[i])
 			directions = directions.filter((_, i) => allowed[i])
 		}
 		this.applying = true
+		let applied = false
 		try {
 			const ops = opsFor(items, directions)
 			const resolved = await tasks.run(label, () => api.applySync(dir, ops, label))
@@ -218,17 +222,29 @@ class InstanceState {
 			content.apply(resolved)
 			void content.refreshHistory()
 			ws.changed()
-			toasts.show(done(items.length), [
-				{ label: 'Undo', command: 'edit.undo', run: () => void content.undo() },
-			])
-			return true
+			applied = true
 		} catch (error) {
 			toasts.error(error)
-			return false
 		} finally {
 			this.applying = false
 			await this.scan()
 		}
+		if (!applied || ws.dir !== dir) return false
+		const stuck = items.filter((item) =>
+			this.items.some((now) => now.key === item.key && now.side === item.side && !now.ignored),
+		)
+		const moved = items.length - stuck.length
+		if (moved > 0) {
+			toasts.show(done(moved), [
+				{ label: 'Undo', command: 'edit.undo', run: () => void content.undo() },
+			])
+		}
+		if (stuck.length > 0) {
+			toasts.info(`Still different: ${listNames(stuck.map((item) => item.label))}`, [
+				{ label: 'Review', run: () => tabs.open('instance') },
+			])
+		}
+		return moved > 0
 	}
 
 	push(items: SyncItem[] = this.toPush): Promise<boolean> {
@@ -280,7 +296,8 @@ class InstanceState {
 
 	async readLog(): Promise<void> {
 		const dir = ws.dir
-		if (!dir || !this.binding) return
+		if (!dir || !this.binding || this.#readingLog) return
+		this.#readingLog = true
 		try {
 			const chunk = await api.readGameLog(dir, this.#logOffset)
 			if (chunk.reset) this.log = ''
@@ -289,6 +306,8 @@ class InstanceState {
 			this.logError = null
 		} catch (error) {
 			this.logError = errorText(error)
+		} finally {
+			this.#readingLog = false
 		}
 	}
 

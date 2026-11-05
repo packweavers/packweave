@@ -160,7 +160,7 @@ export type Suggested = { projectId: string, provider: ProviderId, name: string,
 
 export type SyncIgnored = { key: string, label: string, };
 
-export type SyncOp = { target: 'mod' | 'file' | 'env', kind: string, direction: 'push' | 'pull', path?: string, projectId?: string, slug?: string, provider?: ProviderId, name?: string, instanceVersionId?: string, filename?: string, relPath?: string, projectType?: ProjectType, };
+export type SyncOp = { target: 'mod' | 'file' | 'env', kind: string, direction: 'push' | 'pull', path?: string, projectId?: string, slug?: string, provider?: ProviderId, name?: string, instanceVersionId?: string, filename?: string, relPath?: string, projectType?: ProjectType, key?: string, };
 
 export type SyncReport = { bound: boolean, instanceDir: string | null, mods: Array<ModChange>, files: Array<FileChange>, env: EnvChange | null, ignored: Array<SyncIgnored>, inSync: boolean, };
 

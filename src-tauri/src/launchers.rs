@@ -603,7 +603,7 @@ fn write_mmc_env(
     let comps = json
         .get_mut("components")
         .and_then(|c| c.as_array_mut())
-        .ok_or_else(|| anyhow!("mmc-pack.json has no components list"))?;
+        .ok_or_else(|| anyhow!("mmc-pack.json has no components list."))?;
     comps.retain(|c| {
         !matches!(
             c.get("uid").and_then(|u| u.as_str()).unwrap_or(""),
@@ -645,18 +645,27 @@ fn read_modrinth_env(game_dir: &Path) -> Option<Meta> {
     let conn =
         rusqlite::Connection::open_with_flags(&db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
             .ok()?;
+    let row = |r: &rusqlite::Row| {
+        Ok((
+            r.get::<_, Option<String>>(0)?,
+            r.get::<_, rusqlite::types::Value>(1)?,
+            r.get::<_, Option<String>>(2)?,
+        ))
+    };
     let (mc, loader_val, loader_version) = conn
         .query_row(
-            "SELECT game_version, mod_loader, mod_loader_version FROM profiles WHERE path = ?1",
+            "SELECT cs.game_version, cs.loader, cs.loader_version FROM instances i \
+             JOIN instance_content_sets cs ON cs.id = i.applied_content_set_id WHERE i.path = ?1",
             [&key],
-            |r| {
-                Ok((
-                    r.get::<_, Option<String>>(0)?,
-                    r.get::<_, rusqlite::types::Value>(1)?,
-                    r.get::<_, Option<String>>(2)?,
-                ))
-            },
+            row,
         )
+        .or_else(|_| {
+            conn.query_row(
+                "SELECT game_version, mod_loader, mod_loader_version FROM profiles WHERE path = ?1",
+                [&key],
+                row,
+            )
+        })
         .ok()?;
     let loader = match loader_val {
         rusqlite::types::Value::Text(s) => modrinth_loader(&s),
@@ -678,6 +687,16 @@ fn write_modrinth_env(
     };
     let conn = rusqlite::Connection::open(&db)?;
     conn.busy_timeout(std::time::Duration::from_millis(3000))?;
+    let current = conn.execute(
+        "UPDATE instance_content_sets SET \
+         protocol_version = CASE WHEN game_version = ?1 THEN protocol_version ELSE NULL END, \
+         game_version = ?1, loader = ?2, loader_version = ?3 \
+         WHERE id = (SELECT applied_content_set_id FROM instances WHERE path = ?4)",
+        rusqlite::params![minecraft, loader, loader_version, key],
+    );
+    if let Ok(updated) = current {
+        return Ok(updated > 0);
+    }
     let existing = conn
         .query_row(
             "SELECT mod_loader FROM profiles WHERE path = ?1",
@@ -709,7 +728,7 @@ fn write_vanilla_env(
     let profiles = json
         .get_mut("profiles")
         .and_then(|p| p.as_object_mut())
-        .ok_or_else(|| anyhow!("launcher_profiles.json has no profiles"))?;
+        .ok_or_else(|| anyhow!("launcher_profiles.json has no profiles."))?;
     let key = profiles
         .iter()
         .max_by(|a, b| {
