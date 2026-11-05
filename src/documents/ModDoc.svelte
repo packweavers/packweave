@@ -1,11 +1,14 @@
 <script lang="ts">
+	import { Ellipsis } from '@lucide/svelte'
 	import { onMount } from 'svelte'
 
 	import { isPlatform, platformPage, PLATFORMS, type Platform } from '@/lib/content/sources'
 	import { versionLoader } from '@/lib/content/types'
-	import { findSource, removeContent, toggleDisabled } from '@/lib/flows/content'
+	import { findSource, removeContent, toggleDisabled, updateContent } from '@/lib/flows/content'
+	import { contentMenu } from '@/lib/menus'
 	import { Table } from '@/lib/state/columns.svelte'
 	import { content } from '@/lib/state/content.svelte'
+	import { menus } from '@/lib/state/menus.svelte'
 	import { selection } from '@/lib/state/selection.svelte'
 	import { tabs, type Doc } from '@/lib/state/tabs.svelte'
 	import { tasks } from '@/lib/state/tasks.svelte'
@@ -19,6 +22,7 @@
 	import Author from '@/ui/Author.svelte'
 	import ColumnHead from '@/ui/ColumnHead.svelte'
 	import Empty from '@/ui/Empty.svelte'
+	import IconButton from '@/ui/IconButton.svelte'
 	import ModIcon from '@/ui/ModIcon.svelte'
 	import { pending } from '@/ui/pending'
 	import Select from '@/ui/Select.svelte'
@@ -77,9 +81,13 @@
 	$effect(() => {
 		const id = mod?.projectId
 		if (!id || !minecraft || (provider !== 'modrinth' && provider !== 'curseforge')) return
+		let live = true
 		void projectDetails(provider, id)
-			.then((d) => (details = d))
+			.then((d) => {
+				if (live) details = d
+			})
 			.catch((error) => {
+				if (!live) return
 				details = null
 				tasks.fail(`Loading the ${providerName(provider)} page`, error)
 			})
@@ -90,26 +98,38 @@
 			projectType ? versionLoader(projectType, loader) : null,
 		)
 			.then((list) => {
+				if (!live) return
 				versionList = list
 				versionError = null
 			})
 			.catch((error) => {
+				if (!live) return
 				versionList = []
 				versionError = errorText(error)
 			})
+		return () => {
+			live = false
+		}
 	})
 
 	$effect(() => {
 		if (!minecraft || !alternates) return
 		const kind = projectType ? versionLoader(projectType, loader) : null
+		let live = true
 		for (const entry of alternates.split(' ')) {
 			const [platform, id] = entry.split(':') as [ProviderId, string]
 			void loadVersions(id, platform, minecraft, kind)
-				.then((list) => (altVersions = { ...altVersions, [platform]: list.slice(0, 60) }))
+				.then((list) => {
+					if (live) altVersions = { ...altVersions, [platform]: list.slice(0, 60) }
+				})
 				.catch((error) => {
+					if (!live) return
 					altVersions = { ...altVersions, [platform]: [] }
 					tasks.fail(`Loading ${providerName(platform)} versions`, error)
 				})
+		}
+		return () => {
+			live = false
 		}
 	})
 
@@ -147,10 +167,20 @@
 	<div class="bar doc-toolbar">
 		<span class="doc-title">{mod.name}</span>
 		<span class="spacer"></span>
+		{#if content.updates[mod.key]}
+			<button class="btn primary" onclick={pending(() => updateContent([mod.key]))}
+				>Update to {content.updates[mod.key].versionNumber}</button
+			>
+		{/if}
 		<button class="btn" onclick={pending(() => toggleDisabled([mod.key]))}
 			>{mod.disabled ? 'Enable' : 'Disable'}</button
 		>
 		<button class="btn danger" onclick={pending(() => removeContent([mod.key]))}>Remove</button>
+		<IconButton
+			icon={Ellipsis}
+			label="More"
+			onclick={(e) => menus.below(e.currentTarget as Element, contentMenu([mod.key]))}
+		/>
 	</div>
 	<div class="scroll page">
 		<header class="head">
@@ -302,7 +332,11 @@
 			<section>
 				<div class="band bar">Dependencies</div>
 				{#each [...required, ...optional] as dep (dep.key)}
-					<button class="trow" onclick={() => tabs.open('mod', dep.key)}>
+					<button
+						class="trow"
+						onclick={() => tabs.open('mod', dep.key)}
+						oncontextmenu={(e) => menus.at(e, contentMenu([dep.key]))}
+					>
 						<ModIcon url={content.meta[dep.projectId]?.iconUrl} size={16} />
 						<span class="name">{dep.name}</span>
 						<span class="tag">{required.includes(dep) ? 'required' : 'optional'}</span>

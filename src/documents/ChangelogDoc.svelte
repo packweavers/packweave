@@ -39,26 +39,37 @@
 		const since = release.range === 'release' ? tag : null
 		void git.head
 		if (!dir) return
+		let live = true
 		if (since) {
 			void compare(dir, since, 'HEAD')
 				.then((result) => {
+					if (!live) return
 					diff = result.pack
 					subjects = result.commits.map((c) => c.subject)
 				})
 				.catch((error) => {
+					if (!live) return
 					diff = null
 					tasks.fail('Comparing with the last release', error)
 				})
 		} else {
 			void packDiff(dir, EMPTY_TREE, 'HEAD')
-				.then((d) => (diff = d))
+				.then((d) => {
+					if (live) diff = d
+				})
 				.catch((error) => {
+					if (!live) return
 					diff = null
 					tasks.fail('Reading the pack history', error)
 				})
 			void log(dir, 200)
-				.then((commits) => (subjects = commits.map((c) => c.subject)))
+				.then((commits) => {
+					if (live) subjects = commits.map((c) => c.subject)
+				})
 				.catch(tasks.or('Reading commits', undefined))
+		}
+		return () => {
+			live = false
 		}
 	})
 

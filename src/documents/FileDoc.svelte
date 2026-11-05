@@ -128,9 +128,15 @@
 		void buffer?.original
 		void git.status
 		if (mode !== 'compare' || !dir) return
+		let live = true
 		void diffFile(dir, rel)
-			.then((d) => (diff = d))
+			.then((d) => {
+				if (live) diff = d
+			})
 			.catch((error) => tasks.fail('Reading the diff', error))
+		return () => {
+			live = false
+		}
 	})
 
 	function defaultMode(of: FileKind): Mode {

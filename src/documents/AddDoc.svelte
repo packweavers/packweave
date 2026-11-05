@@ -6,7 +6,9 @@
 	import { app } from '@/lib/state/app.svelte'
 	import { catalog } from '@/lib/state/catalog.svelte'
 	import { content } from '@/lib/state/content.svelte'
+	import { menus } from '@/lib/state/menus.svelte'
 	import { tabs, type Doc } from '@/lib/state/tabs.svelte'
+	import { toasts } from '@/lib/state/toasts.svelte'
 	import { ws } from '@/lib/state/workspace.svelte'
 	import type { CatalogHit, ProjectType, ProviderId } from '@/lib/tauri/types'
 	import { compactCount, gameLabel } from '@/lib/util/format'
@@ -67,10 +69,19 @@
 		])
 	}
 
+	function linkName(link: string): string {
+		const last = link.split(/[?#]/)[0].replace(/\/+$/, '').split('/').pop() ?? link
+		try {
+			return decodeURIComponent(last).replace(/\.(jar|zip)$/i, '')
+		} catch {
+			return last.replace(/\.(jar|zip)$/i, '')
+		}
+	}
+
 	function addUrl(): void {
 		const link = url.trim()
 		if (!/^https?:\/\//.test(link)) return
-		const name = decodeURIComponent(link.split('/').pop() ?? link).replace(/\.(jar|zip)$/i, '')
+		const name = linkName(link)
 		void content
 			.add([{ provider: 'url', projectId: link, url: link, name, projectType: catalog.type }])
 			.then((ok) => {
@@ -155,6 +166,22 @@
 				tabindex="-1"
 				onclick={() => (catalog.selected = hit)}
 				ondblclick={() => (held && inPack ? tabs.open('mod', held.key) : add(hit))}
+				oncontextmenu={(e) =>
+					menus.at(e, [
+						held && inPack
+							? { label: 'Open', run: () => tabs.open('mod', held.key) }
+							: { label: 'Add', run: () => add(hit) },
+						...(held && inPack ? [] : [{ label: 'Details', run: () => (catalog.selected = hit) }]),
+						'separator',
+						{
+							label: 'Copy name',
+							run: () =>
+								void navigator.clipboard
+									.writeText(hit.title)
+									.then(() => toasts.show('Copied name'))
+									.catch((error) => toasts.error(error)),
+						},
+					])}
 				onkeydown={(e) => e.key === 'Enter' && (catalog.selected = hit)}
 			>
 				<ModIcon url={hit.iconUrl} size={32} />

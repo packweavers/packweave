@@ -133,7 +133,7 @@
 				aria-selected={selected === row.commit.hash}
 				tabindex="-1"
 				onclick={() => select(row)}
-				oncontextmenu={(e) => menus.at(e, commitMenu(row.commit.hash))}
+				oncontextmenu={(e) => menus.at(e, commitMenu(row.commit.hash, row.commit.subject))}
 			>
 				{#if view === 'graph'}
 					<svg class="graph" width={lanes * LANE} height={ROW} aria-hidden="true">

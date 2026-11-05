@@ -36,13 +36,16 @@
 			onchange?.(value)
 		}
 		const up = () => {
+			if (!dragging) return
 			dragging = false
 			handle.removeEventListener('pointermove', move)
 			handle.removeEventListener('pointerup', up)
+			handle.removeEventListener('lostpointercapture', up)
 			ondone?.()
 		}
 		handle.addEventListener('pointermove', move)
 		handle.addEventListener('pointerup', up)
+		handle.addEventListener('lostpointercapture', up)
 	}
 </script>
 

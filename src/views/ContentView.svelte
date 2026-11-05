@@ -3,7 +3,7 @@
 
 	import { FILTER_LABELS, filterCounts, type ContentFilter } from '@/lib/content/rows'
 	import { CONTENT_TYPES } from '@/lib/content/types'
-	import { findSources, openAddContent, pasteList } from '@/lib/flows/content'
+	import { findSources, openAddContent, pasteList, updateContent } from '@/lib/flows/content'
 	import { content } from '@/lib/state/content.svelte'
 	import { contentView } from '@/lib/state/contentview.svelte'
 	import { menus } from '@/lib/state/menus.svelte'
@@ -40,6 +40,38 @@
 	function openFilter(filter: ContentFilter): void {
 		contentView.show('mod', filter)
 		tabs.open('content', 'mod', { preview: true })
+	}
+
+	function typeMenu(event: MouseEvent, type: ProjectType): void {
+		menus.at(event, [
+			{ label: 'Open', run: () => tabs.open('content', type) },
+			{ label: 'Open to the side', run: () => tabs.open('content', type, { side: true }) },
+			'separator',
+			{ label: `Add ${typeName(type, true).toLowerCase()}…`, run: () => openAddContent(type) },
+		])
+	}
+
+	function filterMenu(event: MouseEvent, filter: ContentFilter): void {
+		const keys = Object.keys(content.updates)
+		menus.at(event, [
+			{ label: 'Open', run: () => openFilter(filter) },
+			...(filter === 'updates'
+				? [
+						'separator' as const,
+						{
+							label: `Update ${keys.length}`,
+							command: 'content.update',
+							disabled: keys.length === 0,
+							run: () => void updateContent(keys),
+						},
+						{
+							label: 'Check for updates',
+							command: 'content.check',
+							run: () => void content.checkUpdates(true),
+						},
+					]
+				: []),
+		])
 	}
 
 	function more(event: MouseEvent): void {
@@ -87,6 +119,7 @@
 					contentView.filter[type] === 'all'}
 				onclick={() => openType(type)}
 				ondblclick={() => tabs.open('content', type)}
+				oncontextmenu={(e) => typeMenu(e, type)}
 			/>
 		{/each}
 	</div>
@@ -100,6 +133,7 @@
 						active.arg === 'mod' &&
 						contentView.filter.mod === filter}
 					onclick={() => openFilter(filter)}
+					oncontextmenu={(e) => filterMenu(e, filter)}
 				/>
 			{/if}
 		{/each}

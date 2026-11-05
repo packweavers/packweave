@@ -2,11 +2,13 @@
 	import ConfirmDialog from '@/dialogs/ConfirmDialog.svelte'
 	import { pathHints } from '@/lib/files/paths'
 	import { displayPath } from '@/lib/git/changes'
+	import { contentMenu, fileMenu } from '@/lib/menus'
 	import { content } from '@/lib/state/content.svelte'
 	import { dialogs } from '@/lib/state/dialogs.svelte'
 	import { files } from '@/lib/state/files.svelte'
 	import { git } from '@/lib/state/git.svelte'
 	import { instance } from '@/lib/state/instance.svelte'
+	import { menus } from '@/lib/state/menus.svelte'
 	import { tabs } from '@/lib/state/tabs.svelte'
 	import { tasks } from '@/lib/state/tasks.svelte'
 	import { toasts } from '@/lib/state/toasts.svelte'
@@ -159,7 +161,7 @@
 		const paths = [...new Set(fileMatches.map((m) => m.path))]
 		const ok = await dialogs.open(ConfirmDialog, {
 			title: `Replace in ${plural(paths.length, 'file', 'files')}?`,
-			message: `${fileMatches.length} matches of "${query}" become "${replacement}".`,
+			message: `${fileMatches.length} matches of “${query}” become “${replacement}”.`,
 			confirm: 'Replace all',
 		})
 		if (!ok) return
@@ -179,12 +181,17 @@
 	}
 </script>
 
-{#snippet lines(matches: FileMatch[], onopen: (m: FileMatch, keep: boolean) => void)}
+{#snippet lines(
+	matches: FileMatch[],
+	onopen: (m: FileMatch, keep: boolean) => void,
+	inPack = false,
+)}
 	{#each matches as match (`${match.path}:${match.line}`)}
 		<button
 			class="match"
 			onclick={() => onopen(match, false)}
 			ondblclick={() => onopen(match, true)}
+			oncontextmenu={(e) => inPack && menus.at(e, fileMenu(match.path, false))}
 		>
 			<span class="line mono small">{match.line}</span>
 			<span class="text mono">
@@ -265,14 +272,18 @@
 		<SideSection title="Files" count={fileMatches.length}>
 			{#each byFile as [path, matches] (path)}
 				<div class="file mono small">{displayPath(path)}</div>
-				{@render lines(matches, openMatch)}
+				{@render lines(matches, openMatch, true)}
 			{/each}
 		</SideSection>
 	{/if}
 	{#if modMatches.length > 0}
 		<SideSection title="Mods" count={modMatches.length}>
 			{#each modMatches as mod (mod.key)}
-				<button class="match" onclick={() => tabs.open('mod', mod.key, { preview: true })}>
+				<button
+					class="match"
+					onclick={() => tabs.open('mod', mod.key, { preview: true })}
+					oncontextmenu={(e) => menus.at(e, contentMenu([mod.key]))}
+				>
 					<span class="text">{mod.name}</span>
 				</button>
 			{/each}

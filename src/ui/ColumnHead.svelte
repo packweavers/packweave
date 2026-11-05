@@ -45,7 +45,7 @@
 		flex: none;
 		align-items: center;
 		height: var(--row);
-		background: var(--band);
+		background: linear-gradient(var(--band), var(--band)), var(--doc);
 		border-bottom: 1px solid var(--line);
 		font-size: 12.5px;
 		font-weight: 600;

@@ -2,11 +2,13 @@
 	import { discard } from '@/lib/flows/git'
 	import { changeWord } from '@/lib/git/changes'
 	import { SIDE_WORDS } from '@/lib/instance/items'
+	import { contentMenu } from '@/lib/menus'
 	import { app } from '@/lib/state/app.svelte'
 	import { content } from '@/lib/state/content.svelte'
 	import { files } from '@/lib/state/files.svelte'
 	import { git } from '@/lib/state/git.svelte'
 	import { instance } from '@/lib/state/instance.svelte'
+	import { menus } from '@/lib/state/menus.svelte'
 	import { preserve } from '@/lib/state/preserve.svelte'
 	import { tabs, type Doc } from '@/lib/state/tabs.svelte'
 	import { ws } from '@/lib/state/workspace.svelte'
@@ -56,7 +58,11 @@
 	<section class="inspector-section">
 		<div class="band">File</div>
 		{#if owner}
-			<button class="kv" onclick={() => tabs.open('mod', owner.key)}>
+			<button
+				class="kv"
+				onclick={() => tabs.open('mod', owner.key)}
+				oncontextmenu={(e) => menus.at(e, contentMenu([owner.key]))}
+			>
 				<span class="k">Mod</span><span class="v">{owner.name}</span>
 			</button>
 		{/if}

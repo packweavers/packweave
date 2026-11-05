@@ -70,11 +70,14 @@
 		files.toggle(rel)
 	}
 
-	async function create(folder: boolean): Promise<void> {
+	async function create(folder: boolean, into: string | null = null): Promise<void> {
 		const target =
-			active && files.listings[active] === undefined
-				? active.slice(0, active.lastIndexOf('/'))
-				: OVERRIDES
+			into ??
+			(active && files.listings[active] !== undefined
+				? active
+				: active
+					? active.slice(0, active.lastIndexOf('/'))
+					: OVERRIDES)
 		const base = `${target || OVERRIDES}/`
 		const name = await dialogs.open(PromptDialog, {
 			title: folder ? 'New folder' : 'New file',
@@ -112,6 +115,13 @@
 
 	function contextMenu(event: MouseEvent, rel: string, isDir: boolean): void {
 		menus.at(event, [
+			...(isDir
+				? [
+						{ label: 'New file…', run: () => void create(false, rel) },
+						{ label: 'New folder…', run: () => void create(true, rel) },
+						'separator' as const,
+					]
+				: []),
 			...fileMenu(rel, isDir, true),
 			'separator',
 			{ label: 'Rename…', run: () => void rename(rel) },

@@ -15,7 +15,7 @@
 	import { pathHints } from '@/lib/files/paths'
 	import { rulesUnder, ruleTree, type RuleKind, type RuleNode } from '@/lib/files/rules'
 	import { IGNORE_FILES, openInFiles, openSetting, resetIgnoreFile } from '@/lib/flows/files'
-	import { addRemote, initRepo, withGit } from '@/lib/flows/git'
+	import { addRemote, initRepo, removeRemote, withGit } from '@/lib/flows/git'
 	import { linkInstance } from '@/lib/flows/instance'
 	import { chooseDatapackFolder } from '@/lib/flows/pack'
 	import { app } from '@/lib/state/app.svelte'
@@ -24,13 +24,14 @@
 	import { files } from '@/lib/state/files.svelte'
 	import { git } from '@/lib/state/git.svelte'
 	import { instance } from '@/lib/state/instance.svelte'
+	import { menus } from '@/lib/state/menus.svelte'
 	import { preserve, PRESERVE_FILE } from '@/lib/state/preserve.svelte'
 	import { tabs, type Doc } from '@/lib/state/tabs.svelte'
 	import { tasks } from '@/lib/state/tasks.svelte'
 	import { toasts } from '@/lib/state/toasts.svelte'
 	import { ws } from '@/lib/state/workspace.svelte'
 	import { loaderVersions, minecraftVersions } from '@/lib/tauri/catalog'
-	import { removeRemote, setRemoteUrl } from '@/lib/tauri/git'
+	import { setRemoteUrl } from '@/lib/tauri/git'
 	import { readIgnore, writeIgnore } from '@/lib/tauri/instance'
 	import { setPackIcon } from '@/lib/tauri/pack'
 	import type { Channel, IgnoreKind, Manifest } from '@/lib/tauri/types'
@@ -96,12 +97,19 @@
 
 	$effect(() => {
 		if (!minecraft || loader === 'vanilla') return
+		let live = true
 		void loaderVersions(loader, minecraft)
-			.then((found) => (loaders = found.versions.slice(0, 50)))
+			.then((found) => {
+				if (live) loaders = found.versions.slice(0, 50)
+			})
 			.catch((error) => {
+				if (!live) return
 				loaders = []
 				tasks.fail('Loading loader versions', error)
 			})
+		return () => {
+			live = false
+		}
 	})
 
 	$effect(() => {
@@ -140,7 +148,7 @@
 	async function newestLoader(kind: string, mc: string): Promise<string | null> {
 		try {
 			const newest = (await loaderVersions(kind, mc)).versions[0] ?? null
-			if (!newest) toasts.error(`${loaderName(kind)} has no version for Minecraft ${mc}`)
+			if (!newest) toasts.error(`${loaderName(kind)} has no version for Minecraft ${mc}.`)
 			return newest
 		} catch (error) {
 			toasts.error(error)
@@ -258,6 +266,22 @@
 		openRule(item)
 	}
 
+	function ruleMenu(event: MouseEvent, item: RuleNode): void {
+		menus.at(event, [
+			...(item.kind !== 'glob' ? [{ label: 'Open', run: () => openRule(item) }] : []),
+			{
+				label: 'Copy path',
+				run: () =>
+					void navigator.clipboard
+						.writeText(item.path)
+						.then(() => toasts.show('Copied path'))
+						.catch((error) => toasts.error(error)),
+			},
+			'separator',
+			{ label: 'Remove', danger: true, run: () => void removeRules(item) },
+		])
+	}
+
 	async function removeRules(item: RuleNode): Promise<void> {
 		const lines = rulesUnder(item).map((r) => r.line)
 		if (lines.length > 1) {
@@ -310,6 +334,7 @@
 		tabindex="-1"
 		onclick={(e) => onEditClick(e, item)}
 		ondblclick={(e) => onEditDouble(e, item)}
+		oncontextmenu={(e) => ruleMenu(e, item)}
 	>
 		<span class="twisty">
 			{#if item.children.length > 0}
@@ -543,9 +568,7 @@
 					<span class="spacer"></span>
 					<button class="btn" onclick={pending(() => resetPreserve())}>Reset to defaults</button>
 				</div>
-				<div class="row small hint">
-					In self-updating packs, player edits to these are preserved.
-				</div>
+				<div class="row small hint">In self-updating packs, player edits to these are kept</div>
 				{#each editTree as item (item.id)}
 					{@render editNode(item, 0)}
 				{:else}
@@ -554,7 +577,7 @@
 				<div class="row">
 					<PathField
 						bind:value={newPattern}
-						placeholder="options.txt, config/ or config/mod.toml#setting"
+						placeholder="options.txt, config/, or config/mod.toml#setting"
 						suggest={(text) => files.editHints(text)}
 						onsubmit={addPattern}
 					/>
@@ -585,16 +608,8 @@
 										await git.refreshRefs()
 									})}
 							/>
-							<button
-								class="btn danger"
-								onclick={pending(() =>
-									withGit(async () => {
-										if (ws.dir) await removeRemote(ws.dir, remote.name)
-										await git.refreshRefs()
-									}),
-								)}
-							>
-								Remove
+							<button class="btn danger" onclick={pending(() => removeRemote(remote.name))}>
+								Remove…
 							</button>
 						</div>
 					{/each}

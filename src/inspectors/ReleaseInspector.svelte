@@ -23,12 +23,18 @@
 	$effect(() => {
 		const next = version
 		void $state.snapshot(app.pack(main))
+		let live = true
 		untrack(
 			() =>
 				void publishSteps(next)
-					.then((found) => (steps = found))
+					.then((found) => {
+						if (live) steps = found
+					})
 					.catch((error) => tasks.fail('Listing the publish steps', error)),
 		)
+		return () => {
+			live = false
+		}
 	})
 </script>
 

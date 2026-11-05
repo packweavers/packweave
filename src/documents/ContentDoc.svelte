@@ -25,6 +25,7 @@
 	import { menus } from '@/lib/state/menus.svelte'
 	import { selection } from '@/lib/state/selection.svelte'
 	import { tabs, type Doc } from '@/lib/state/tabs.svelte'
+	import { toasts } from '@/lib/state/toasts.svelte'
 	import { ws } from '@/lib/state/workspace.svelte'
 	import type { ProjectType } from '@/lib/tauri/types'
 	import { typeName } from '@/lib/util/format'
@@ -137,7 +138,20 @@
 			select({ selected: [row.id], anchor: row.id, cursor: row.id })
 		}
 		if (row.removed) {
-			menus.at(event, [{ label: 'Restore', run: () => void restoreRemoved(row.removed!.path) }])
+			const removed = row.removed
+			menus.at(event, [
+				{ label: 'Restore', run: () => void restoreRemoved(removed.path) },
+				{ label: 'Show changes', run: () => tabs.open('changes') },
+				'separator',
+				{
+					label: 'Copy name',
+					run: () =>
+						void navigator.clipboard
+							.writeText(removed.name)
+							.then(() => toasts.show('Copied name'))
+							.catch((error) => toasts.error(error)),
+				},
+			])
 			return
 		}
 		if (row.local) {
