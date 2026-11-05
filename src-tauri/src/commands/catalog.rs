@@ -125,7 +125,7 @@ fn pick_convert(pool: &[Cand], slug: &str, name: &str) -> Option<Cand> {
 }
 
 fn local_file(dir: &Path, item: &content::ContentItem) -> Option<Vec<u8>> {
-    let filename = item.active()?.filename.clone();
+    let filename = content::plain_filename(&item.active()?.filename);
     let instance = crate::packlocal::read(dir).instance_dir?;
     if filename.is_empty() {
         return None;

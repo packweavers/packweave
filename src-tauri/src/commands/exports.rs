@@ -31,12 +31,11 @@ pub async fn export_mrpack(
     lock.loader_version = resolve_loader_version(&mr, &manifest).await;
     mrpack::export(
         &lock,
-        &manifest.name,
+        &manifest,
         &manifest.version,
         &PathBuf::from(output),
         &env,
         &filter.overrides(&dir),
-        &Folders::of(&manifest),
     )
     .await
     .map_err(es)
@@ -59,12 +58,11 @@ pub async fn export_curseforge(
     cfpack::export(
         &cf,
         &lock,
-        &manifest.name,
+        &manifest,
         &manifest.version,
         &PathBuf::from(output),
         &env,
         &filter.overrides(&dir),
-        &Folders::of(&manifest),
     )
     .await
     .map_err(es)

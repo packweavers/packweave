@@ -24,9 +24,8 @@ export interface ReleasePrefs {
 		mrpack: boolean
 		curseforge: boolean
 		instance: boolean
-		server: boolean
-		client: boolean
 	}
+	server: boolean
 	publish: { github: boolean; modrinth: boolean; curseforge: boolean }
 }
 
@@ -80,7 +79,8 @@ export function defaultPackPrefs(): PackPrefs {
 			publishRepo: '',
 			modrinthProject: '',
 			curseforgeProject: '',
-			exports: { mrpack: true, curseforge: false, instance: false, server: false, client: false },
+			exports: { mrpack: true, curseforge: false, instance: false },
+			server: false,
 			publish: { github: false, modrinth: false, curseforge: false },
 		},
 		newBranchInstance: 'copy',
@@ -139,6 +139,7 @@ function readPack(value: unknown): PackPrefs {
 			modrinthProject: text(release.modrinthProject),
 			curseforgeProject: text(release.curseforgeProject),
 			exports: flags(release.exports, base.release.exports),
+			server: bool(release.server, base.release.server),
 			publish: flags(release.publish, base.release.publish),
 		},
 		newBranchInstance: pick(

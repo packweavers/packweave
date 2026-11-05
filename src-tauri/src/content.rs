@@ -65,6 +65,9 @@ impl ContentItem {
         self.explicit |= other.explicit;
         self.pinned |= other.pinned;
         self.no_bundle |= other.no_bundle;
+        if self.side == "auto" && other.side != "auto" {
+            self.side = other.side;
+        }
         for parent in other.dependents {
             if !self.dependents.contains(&parent) {
                 self.dependents.push(parent);
@@ -90,8 +93,33 @@ impl ContentItem {
     }
 }
 
-fn auto_side() -> String {
+pub(crate) fn auto_side() -> String {
     "auto".into()
+}
+
+pub const SIDES: [&str; 4] = ["auto", "both", "client", "server"];
+
+pub fn apply_side(side: &str, client: &mut String, server: &mut String) {
+    let support = |value: &mut String| {
+        if value != "required" && value != "optional" {
+            *value = "required".into();
+        }
+    };
+    match side {
+        "client" => {
+            support(client);
+            *server = "unsupported".into();
+        }
+        "server" => {
+            *client = "unsupported".into();
+            support(server);
+        }
+        "both" => {
+            support(client);
+            support(server);
+        }
+        _ => {}
+    }
 }
 
 pub fn type_dir(project_type: ProjectType) -> &'static str {
@@ -409,37 +437,27 @@ pub fn set_explicit(pack_dir: &Path, key: &str, explicit: bool) -> Result<bool> 
     Ok(false)
 }
 
+pub fn update_items(
+    pack_dir: &Path,
+    keys: &[String],
+    mut change: impl FnMut(&mut ContentItem),
+) -> Result<usize> {
+    let mut changed = 0;
+    for mut item in read_all(pack_dir) {
+        if keys.iter().any(|key| matches(&item, key)) {
+            change(&mut item);
+            add_item(pack_dir, &item)?;
+            changed += 1;
+        }
+    }
+    Ok(changed)
+}
+
 pub fn set_disabled(pack_dir: &Path, key: &str, disabled: bool) -> Result<bool> {
-    for mut item in read_all(pack_dir) {
-        if matches(&item, key) {
-            item.disabled = disabled;
-            add_item(pack_dir, &item)?;
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-pub fn set_pinned(pack_dir: &Path, key: &str, pinned: bool) -> Result<bool> {
-    for mut item in read_all(pack_dir) {
-        if matches(&item, key) {
-            item.pinned = pinned;
-            add_item(pack_dir, &item)?;
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-pub fn set_no_bundle(pack_dir: &Path, key: &str, no_bundle: bool) -> Result<bool> {
-    for mut item in read_all(pack_dir) {
-        if matches(&item, key) {
-            item.no_bundle = no_bundle;
-            add_item(pack_dir, &item)?;
-            return Ok(true);
-        }
-    }
-    Ok(false)
+    update_items(pack_dir, &[key.to_string()], |item| {
+        item.disabled = disabled
+    })
+    .map(|n| n > 0)
 }
 
 fn reset_source(source: &mut SourceFile) {
@@ -574,11 +592,14 @@ pub fn write_resolved(
     Ok(())
 }
 
-fn index_text(mut files: Vec<(String, String)>) -> Result<String> {
+fn index_text(mut files: Vec<(String, String, Option<String>)>) -> Result<String> {
     files.sort_by(|a, b| a.0.cmp(&b.0));
     let arr: Vec<serde_json::Value> = files
         .into_iter()
-        .map(|(path, sha1)| serde_json::json!({ "path": path, "sha1": sha1 }))
+        .map(|(path, sha1, side)| match side {
+            Some(side) => serde_json::json!({ "path": path, "sha1": sha1, "side": side }),
+            None => serde_json::json!({ "path": path, "sha1": sha1 }),
+        })
         .collect();
     Ok(format!(
         "{}\n",
@@ -613,6 +634,39 @@ fn blob_sha1s() -> &'static Mutex<HashMap<String, String>> {
     CACHE.get_or_init(Default::default)
 }
 
+fn blob_sides() -> &'static Mutex<HashMap<String, Option<String>>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
+    CACHE.get_or_init(Default::default)
+}
+
+fn override_rel(path: &str) -> Option<&str> {
+    path.strip_prefix(instance::OVERRIDES_DIR)?
+        .strip_prefix('/')
+}
+
+fn index_side(
+    manifest: Option<&Manifest>,
+    path: &str,
+    jar_side: impl FnOnce() -> Option<String>,
+) -> Option<String> {
+    let rel = override_rel(path)?;
+    let side = instance::override_side_with(manifest?, rel, jar_side);
+    matches!(side.as_str(), "client" | "server").then_some(side)
+}
+
+fn staged_manifest(pack_dir: &Path, staged: &[(String, String)]) -> Option<Manifest> {
+    let oid = staged
+        .iter()
+        .find(|(path, _)| path == crate::manifest::MANIFEST_FILE)
+        .map(|(_, oid)| oid.clone())?;
+    let mut found = None;
+    crate::git::each_blob(pack_dir, std::slice::from_ref(&oid), |_, bytes| {
+        found = serde_json::from_slice::<Manifest>(bytes).ok();
+    })
+    .ok()?;
+    found
+}
+
 pub(crate) fn stage_index(pack_dir: &Path) -> Result<()> {
     let tracked = crate::git::tracks(pack_dir, INDEX_FILE);
     if !tracked
@@ -627,6 +681,8 @@ pub(crate) fn stage_index(pack_dir: &Path) -> Result<()> {
             export = Some(String::from_utf8_lossy(bytes).into_owned());
         })?;
     }
+    let manifest =
+        staged_manifest(pack_dir, &staged).or_else(|| crate::manifest::read(pack_dir).ok());
     let tracked: HashSet<String> = staged.iter().map(|(path, _)| path.clone()).collect();
     let filter = ExportFilter::committed(pack_dir, tracked, export.as_deref());
     let wanted: Vec<&(String, String)> = staged
@@ -634,14 +690,22 @@ pub(crate) fn stage_index(pack_dir: &Path) -> Result<()> {
         .filter(|(path, _)| indexed(&filter, path))
         .collect();
     let mut cache = blob_sha1s().lock().unwrap_or_else(PoisonError::into_inner);
+    let mut sides = blob_sides().lock().unwrap_or_else(PoisonError::into_inner);
     let mut reads: Vec<String> = Vec::new();
     let mut items: HashSet<String> = HashSet::new();
+    let mut jars: HashSet<String> = HashSet::new();
     for (path, oid) in &wanted {
         let item = content_item_path(path);
         if item {
             items.insert(oid.clone());
         }
-        if (item || !cache.contains_key(oid)) && !reads.contains(oid) {
+        let jar = manifest.as_ref().is_some_and(|m| {
+            override_rel(path).is_some_and(|rel| instance::override_mod_jar(m, rel))
+        }) && !sides.contains_key(oid);
+        if jar {
+            jars.insert(oid.clone());
+        }
+        if (item || jar || !cache.contains_key(oid)) && !reads.contains(oid) {
             reads.push(oid.clone());
         }
     }
@@ -649,33 +713,44 @@ pub(crate) fn stage_index(pack_dir: &Path) -> Result<()> {
     crate::git::each_blob(pack_dir, &reads, |i, bytes| {
         let oid = &reads[i];
         cache.insert(oid.clone(), hex::encode(Sha1::digest(bytes)));
+        if jars.contains(oid) {
+            sides.insert(
+                oid.clone(),
+                crate::modmeta::read_bytes(bytes).and_then(|meta| meta.side),
+            );
+        }
         if items.contains(oid)
             && serde_json::from_slice::<ContentItem>(bytes).is_ok_and(|item| item.disabled)
         {
             disabled.insert(oid.clone());
         }
     })?;
-    let mut files: Vec<(String, String)> = Vec::new();
+    let mut files: Vec<(String, String, Option<String>)> = Vec::new();
     for (path, oid) in wanted {
         if content_item_path(path) && disabled.contains(oid) {
             continue;
         }
         if let Some(sha1) = cache.get(oid) {
-            files.push((path.clone(), sha1.clone()));
+            let side = index_side(manifest.as_ref(), path, || {
+                sides.get(oid).cloned().flatten()
+            });
+            files.push((path.clone(), sha1.clone(), side));
         }
     }
+    drop(sides);
     drop(cache);
     crate::git::stage_blob(pack_dir, INDEX_FILE, index_text(files)?.as_bytes())
 }
 
 pub(crate) fn write_index(pack_dir: &Path) -> Result<()> {
     let filter = ExportFilter::load(pack_dir);
+    let manifest = crate::manifest::read(pack_dir).ok();
     let disabled: std::collections::HashSet<String> = read_all(pack_dir)
         .iter()
         .filter(|i| i.disabled)
         .map(item_rel_path)
         .collect();
-    let mut files: Vec<(String, String)> = Vec::new();
+    let mut files: Vec<(String, String, Option<String>)> = Vec::new();
     for file in filter
         .tree(pack_dir, CONTENT_DIR)
         .into_iter()
@@ -688,13 +763,17 @@ pub(crate) fn write_index(pack_dir: &Path) -> Result<()> {
         if let Ok(bytes) = std::fs::read(&file.path) {
             let mut hasher = Sha1::new();
             hasher.update(&bytes);
-            files.push((file.rel, hex::encode(hasher.finalize())));
+            let side = index_side(manifest.as_ref(), &file.rel, || {
+                crate::modmeta::read_bytes(&bytes).and_then(|meta| meta.side)
+            });
+            files.push((file.rel, hex::encode(hasher.finalize()), side));
         }
     }
     if let Ok(bytes) = std::fs::read(pack_dir.join(crate::dist::PACK_JAR)) {
         files.push((
             crate::dist::PACK_JAR.to_string(),
             hex::encode(Sha1::digest(&bytes)),
+            None,
         ));
     }
     std::fs::write(pack_dir.join(INDEX_FILE), index_text(files)?)?;
@@ -728,7 +807,7 @@ fn write_summary(pack_dir: &Path, manifest: &Manifest, resolved: &[ContentItem])
     let count = |ty: ProjectType, explicit: bool| {
         resolved
             .iter()
-            .filter(|i| i.project_type == ty && i.explicit == explicit)
+            .filter(|i| i.project_type == ty && i.explicit == explicit && !i.disabled)
             .count()
     };
     let mods = count(ProjectType::Mod, true);
@@ -761,9 +840,10 @@ fn write_summary(pack_dir: &Path, manifest: &Manifest, resolved: &[ContentItem])
             noun(datapacks, "data pack", "data packs")
         ));
     }
+    let loader_name = crate::providers::loader_name(&manifest.loader);
     let loader = match &manifest.loader_version {
-        Some(v) => format!("{} {}", manifest.loader, v),
-        None => manifest.loader.clone(),
+        Some(v) if !v.is_empty() => format!("{loader_name} {v}"),
+        _ => loader_name,
     };
     let mut md = String::new();
     md.push_str(&format!("# {}\n\n", manifest.name));
@@ -774,29 +854,37 @@ fn write_summary(pack_dir: &Path, manifest: &Manifest, resolved: &[ContentItem])
         segs.join(", ")
     ));
     md.push_str("## Contents\n\n");
-    let mut rows: Vec<&ContentItem> = resolved.iter().filter(|i| i.explicit).collect();
+    let mut rows: Vec<&ContentItem> = resolved
+        .iter()
+        .filter(|i| i.explicit && !i.disabled)
+        .collect();
     rows.sort_by_key(|i| i.name.to_lowercase());
     for item in rows {
         let pref = item.active();
         let version = pref.map(|s| s.version_number.clone()).unwrap_or_default();
         let slug = pref.map(|s| s.slug.clone()).unwrap_or_default();
-        let link = if item.preferred == ProviderId::Modrinth {
-            format!("https://modrinth.com/project/{slug}")
-        } else {
-            String::new()
+        let id = pref.and_then(|s| s.id.clone()).unwrap_or_default();
+        let link = match item.preferred {
+            ProviderId::Modrinth if !slug.is_empty() => {
+                format!("https://modrinth.com/project/{slug}")
+            }
+            ProviderId::Curseforge if !id.is_empty() => {
+                format!("https://www.curseforge.com/projects/{id}")
+            }
+            ProviderId::Url => pref.and_then(|s| s.url.clone()).unwrap_or_default(),
+            _ => String::new(),
         };
         let vsuffix = if version.is_empty() {
             String::new()
         } else {
             format!(" `{version}`")
         };
-        if link.is_empty() {
-            md.push_str(&format!(
-                "- {}{} ({})\n",
-                item.name, vsuffix, item.preferred
-            ));
-        } else {
+        if !link.is_empty() {
             md.push_str(&format!("- [{}]({}){}\n", item.name, link, vsuffix));
+        } else if item.preferred == ProviderId::Local {
+            md.push_str(&format!("- {}{} (local file)\n", item.name, vsuffix));
+        } else {
+            md.push_str(&format!("- {}{}\n", item.name, vsuffix));
         }
     }
     md.push('\n');
@@ -806,7 +894,20 @@ fn write_summary(pack_dir: &Path, manifest: &Manifest, resolved: &[ContentItem])
     Ok(())
 }
 
+pub(crate) fn plain_filename(name: &str) -> String {
+    let base = name.rsplit(['/', '\\', ':']).next().unwrap_or("");
+    if base == "." || base == ".." {
+        String::new()
+    } else {
+        base.to_string()
+    }
+}
+
 pub fn to_locked(item: &ContentItem) -> LockedMod {
+    let mut sources = item.sources.clone();
+    for source in sources.values_mut() {
+        source.filename = plain_filename(&source.filename);
+    }
     LockedMod {
         name: item.name.clone(),
         project_id: item.project_id(),
@@ -814,7 +915,7 @@ pub fn to_locked(item: &ContentItem) -> LockedMod {
         slug: item.active().map(|s| s.slug.clone()).unwrap_or_default(),
         project_type: item.project_type,
         preferred: item.preferred,
-        sources: item.sources.clone(),
+        sources,
         dependency_type: if item.explicit {
             DepType::Explicit
         } else {
@@ -824,6 +925,7 @@ pub fn to_locked(item: &ContentItem) -> LockedMod {
         optional_dependents: item.optional_dependents.clone(),
         client_side: item.client_side.clone(),
         server_side: item.server_side.clone(),
+        side: item.side.clone(),
         disabled: item.disabled,
         pinned: item.pinned,
         no_bundle: item.no_bundle,

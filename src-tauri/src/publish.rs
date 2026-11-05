@@ -10,7 +10,6 @@ use crate::lockfile::Lockfile;
 use crate::manifest::Manifest;
 use crate::mrpack;
 use crate::packignore::PackFile;
-use crate::ptype::Folders;
 use crate::USER_AGENT;
 
 #[derive(Serialize, Default, TS)]
@@ -36,21 +35,12 @@ pub async fn publish_modrinth(
         bail!("Add your Modrinth token in Settings first.");
     }
     if project_id.is_empty() {
-        bail!("Enter the Modrinth project id.");
+        bail!("Enter the Modrinth project ID.");
     }
     let client = reqwest::Client::builder().user_agent(USER_AGENT).build()?;
     let project_id = modrinth_project(&client, token, project_id.trim()).await?;
     let tmp = std::env::temp_dir().join(format!("packweave-{}.mrpack", file_safe(version_number)));
-    mrpack::export(
-        lock,
-        &manifest.name,
-        version_number,
-        &tmp,
-        env,
-        overrides,
-        &Folders::of(manifest),
-    )
-    .await?;
+    mrpack::export(lock, manifest, version_number, &tmp, env, overrides).await?;
     let bytes = std::fs::read(&tmp)?;
     let _ = std::fs::remove_file(&tmp);
 
@@ -123,7 +113,7 @@ pub async fn publish_curseforge(
     }
     let project_id = project_id.trim();
     if project_id.is_empty() {
-        bail!("Enter the CurseForge project id.");
+        bail!("Enter the CurseForge project ID.");
     }
     if !project_id.chars().all(|c| c.is_ascii_digit()) {
         bail!("Enter the CurseForge project ID, the number on the project's page, not its name.");
@@ -132,17 +122,7 @@ pub async fn publish_curseforge(
     let game_versions =
         cf_game_version_ids(&client, token, &manifest.minecraft, &manifest.loader).await?;
     let tmp = std::env::temp_dir().join(format!("packweave-{}-cf.zip", file_safe(version_number)));
-    cfpack::export(
-        cf,
-        lock,
-        &manifest.name,
-        version_number,
-        &tmp,
-        env,
-        overrides,
-        &Folders::of(manifest),
-    )
-    .await?;
+    cfpack::export(cf, lock, manifest, version_number, &tmp, env, overrides).await?;
     let bytes = std::fs::read(&tmp)?;
     let _ = std::fs::remove_file(&tmp);
 

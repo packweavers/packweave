@@ -68,6 +68,10 @@ export function setPinned(dir: string, keys: string[], pinned: boolean): Promise
 	return call('set_content_pinned', { path: dir, keys, pinned })
 }
 
+export function setSide(dir: string, keys: string[], side: string): Promise<PackResolved> {
+	return call('set_content_side', { path: dir, keys, side })
+}
+
 export function setExplicit(dir: string, key: string, explicit: boolean): Promise<PackResolved> {
 	return call('set_content_explicit', { path: dir, key, explicit })
 }

@@ -104,13 +104,13 @@ export type LoaderVersions = { versions: Array<string>, };
 
 export type LocalContent = { relPath: string, filename: string, projectType: ProjectType, size: number, meta?: ArchiveMeta, };
 
-export type LockedMod = { name: string, projectId: string, key: string, slug: string, projectType: ProjectType, preferred: ProviderId, sources: { [key in ProviderId]?: SourceFile }, dependencyType: DepType, dependents: Array<string>, optionalDependents: Array<string>, clientSide: string, serverSide: string, disabled: boolean, pinned: boolean, noBundle: boolean, };
+export type LockedMod = { name: string, projectId: string, key: string, slug: string, projectType: ProjectType, preferred: ProviderId, sources: { [key in ProviderId]?: SourceFile }, dependencyType: DepType, dependents: Array<string>, optionalDependents: Array<string>, clientSide: string, serverSide: string, side: string, disabled: boolean, pinned: boolean, noBundle: boolean, };
 
 export type Lockfile = { minecraft: string, loader: string, loaderVersion: string | null, mods: Array<LockedMod>, };
 
 export type LogChunk = { text: string, offset: number, reset: boolean, };
 
-export type Manifest = { name: string, version: string, minecraft: string, loader: string, loaderVersion: string | null, channel: Channel, datapacks?: string, packweaveMd?: boolean, formatVersion?: number, };
+export type Manifest = { name: string, version: string, minecraft: string, loader: string, loaderVersion: string | null, channel: Channel, datapacks?: string, overrideSides?: { [key in string]: string }, packweaveMd?: boolean, formatVersion?: number, };
 
 export type MergeNote = { from: string, mode: string, message: string, };
 

@@ -214,10 +214,19 @@ pub(crate) async fn resolve_held(
         .filter(|i| i.no_bundle)
         .map(|i| i.project_id())
         .collect();
+    let sides: std::collections::HashMap<String, String> = all
+        .iter()
+        .filter(|i| i.side != "auto" && content::SIDES.contains(&i.side.as_str()))
+        .map(|i| (i.project_id(), i.side.clone()))
+        .collect();
     let mut combined = out.locked.clone();
     for item in combined.iter_mut() {
         item.pinned = pinned.contains(&item.project_id());
         item.no_bundle = unbundled.contains(&item.project_id());
+        if let Some(side) = sides.get(&item.project_id()) {
+            item.side = side.clone();
+            content::apply_side(side, &mut item.client_side, &mut item.server_side);
+        }
     }
     let resolved: std::collections::HashSet<String> =
         out.locked.iter().map(|i| i.project_id()).collect();

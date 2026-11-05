@@ -19,7 +19,7 @@ import type {
 	Tag,
 } from '@/lib/tauri/types'
 import { openExternal, openInDefaultApp, openPackWindow, reveal } from '@/lib/tauri/windows'
-import { providerName } from '@/lib/util/format'
+import { providerName, SIDE_OPTIONS } from '@/lib/util/format'
 import { join } from '@/lib/util/path'
 import { fileManager } from '@/lib/util/platform'
 
@@ -36,6 +36,7 @@ import {
 	deleteLocalFile,
 	findSources,
 	removeContent,
+	setLocalSide,
 	toggleDisabled,
 	updateContent,
 } from './flows/content'
@@ -285,9 +286,20 @@ export function contentMenu(ids: string[]): MenuEntry[] {
 			run: () => void content.setPinned(ids, !allPinned),
 		},
 		{
-			label: allUnbundled ? 'Bundle in exports' : "Don't bundle in exports",
+			label: allUnbundled ? 'Bundle in Exports' : "Don't bundle in Exports",
 			run: () => void content.setBundled(ids, allUnbundled),
 		},
+	)
+	const side = mods.every((m) => m.side === mods[0].side) ? mods[0].side : null
+	entries.push(
+		'separator',
+		{ heading: 'Side' },
+		...SIDE_OPTIONS.map((option) => ({
+			label: option.label,
+			selected: option.value === side,
+			run: () => void content.setSide(ids, option.value),
+		})),
+		'separator',
 	)
 	if (one) {
 		entries.push(
@@ -387,9 +399,22 @@ function syncIgnoreEntry(targets: SyncIgnored[]): MenuEntry {
 }
 
 export function localMenu(file: LocalContent): MenuEntry[] {
+	const side = ws.manifest?.overrideSides?.[file.relPath] ?? 'auto'
 	return [
 		{ label: `Show in ${fileManager}`, run: () => revealInPack(`overrides/${file.relPath}`) },
 		{ label: 'Copy file name', run: () => copy(file.filename, 'file name') },
+		'separator',
+		{ heading: 'Side' },
+		...SIDE_OPTIONS.map((option) => ({
+			label: option.label,
+			selected: option.value === side,
+			run: () => void setLocalSide(file, option.value),
+		})),
+		'separator',
+		{
+			label: 'Exclude from Exports',
+			run: () => addIgnore('export', `overrides/${file.relPath}`, false),
+		},
 		...(instance.bound
 			? [
 					'separator' as const,

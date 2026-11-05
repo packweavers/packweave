@@ -1,7 +1,7 @@
 import { call } from './call'
 import type { Bundling } from './types'
 
-type ExportSide = 'common' | 'client' | 'server'
+type ExportSide = 'common' | 'server'
 
 export function exportMrpack(dir: string, output: string, env: ExportSide): Promise<void> {
 	return call('export_mrpack', { path: dir, output, env })

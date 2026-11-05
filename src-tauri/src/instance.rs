@@ -313,6 +313,42 @@ pub fn overrides_dir(pack_dir: &Path) -> PathBuf {
     pack_dir.join(OVERRIDES_DIR)
 }
 
+pub fn override_side(manifest: &crate::manifest::Manifest, rel: &str, path: &Path) -> String {
+    override_side_with(manifest, rel, || {
+        crate::modmeta::read_archive(path).and_then(|meta| meta.side)
+    })
+}
+
+pub fn override_side_with(
+    manifest: &crate::manifest::Manifest,
+    rel: &str,
+    jar_side: impl FnOnce() -> Option<String>,
+) -> String {
+    if let Some(side) = manifest
+        .override_sides
+        .as_ref()
+        .and_then(|sides| sides.get(rel))
+    {
+        return side.clone();
+    }
+    if override_mod_jar(manifest, rel) {
+        if let Some(side) = jar_side() {
+            return side;
+        }
+    }
+    "auto".into()
+}
+
+pub fn override_mod_jar(manifest: &crate::manifest::Manifest, rel: &str) -> bool {
+    let mods = format!("{}/", Folders::of(manifest).install_dir(ProjectType::Mod));
+    rel.strip_prefix(&mods)
+        .is_some_and(|name| !name.contains('/') && name.to_lowercase().ends_with(".jar"))
+}
+
+pub fn side_allows(side: &str, env: &str) -> bool {
+    !(env == "server" && side == "client")
+}
+
 #[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export, export_to = "types.ts")]
@@ -513,7 +549,7 @@ fn collect_files(dir: &Path, base: &Path, matcher: &SyncIgnore, out: &mut Vec<(P
 
 fn safe_rel(rel: &str) -> Result<()> {
     if rel.split(['/', '\\']).any(|c| c == "..") {
-        return Err(anyhow!("unsafe path: {rel}"));
+        return Err(anyhow!("{rel} points outside the folder."));
     }
     Ok(())
 }
@@ -526,9 +562,9 @@ fn copy_checked(src: &Path, dst: &Path, rel: &str) -> Result<()> {
     match std::fs::copy(src, dst) {
         Ok(_) => Ok(()),
         Err(e) if file_in_use(&e) => Err(anyhow!(
-            "{rel} is in use, close Minecraft and your launcher, then try again"
+            "{rel} is in use. Close Minecraft and your launcher, then try again."
         )),
-        Err(e) => Err(anyhow!("couldn't copy {rel}: {e}")),
+        Err(e) => Err(anyhow!("Couldn't copy {rel}: {e}")),
     }
 }
 
@@ -568,11 +604,10 @@ pub fn remove_from_instance(instance: &Path, rel: &str) -> Result<()> {
         if let Err(e) = std::fs::remove_file(p) {
             if file_in_use(&e) {
                 return Err(anyhow!(
-                    "{rel} is in use, close Minecraft and your launcher, \
-                     then try again"
+                    "{rel} is in use. Close Minecraft and your launcher, then try again."
                 ));
             }
-            return Err(anyhow!("couldn't remove {rel}: {e}"));
+            return Err(anyhow!("Couldn't remove {rel}: {e}"));
         }
     }
     Ok(())

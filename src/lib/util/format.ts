@@ -60,9 +60,10 @@ export function plural(n: number, one: string, many: string): string {
 }
 
 export function listNames(names: string[], max = 2): string {
-	if (names.length === 0) return ''
-	if (names.length <= max) return names.join(names.length === 2 ? ' and ' : ', ')
-	return `${names.slice(0, max).join(', ')} and ${names.length - max} more`
+	const shown = names.length <= max ? names : [...names.slice(0, max), `${names.length - max} more`]
+	if (shown.length <= 1) return shown.join('')
+	if (shown.length === 2) return `${shown[0]} and ${shown[1]}`
+	return `${shown.slice(0, -1).join(', ')}, and ${shown[shown.length - 1]}`
 }
 
 const LOADERS: Record<string, string> = {
@@ -129,11 +130,10 @@ export function sideDetail(clientSide: string, serverSide: string): string {
 	return 'Neither'
 }
 
-export function sideName(clientSide: string, serverSide: string): string {
-	const client = clientSide !== 'unsupported'
-	const server = serverSide !== 'unsupported'
-	if (client && server) return 'Both'
-	if (client) return 'Client'
-	if (server) return 'Server'
-	return 'Neither'
-}
+export const SIDE_OPTIONS = [
+	{ value: 'auto', label: 'Auto' },
+	{ value: 'both', label: 'Client and server' },
+	{ value: 'client', label: 'Client only' },
+	{ value: 'server', label: 'Server only' },
+]
+

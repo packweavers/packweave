@@ -70,7 +70,7 @@ public class Packweaver {
                 tokenNext = false;
             } else if (a.equals("--server")) {
                 env = "server";
-            } else if (a.equals("--client")) {
+            } else if (a.equals("--client-only")) {
                 env = "client";
             } else if (a.equals("--finish")) {
                 finish = true;
@@ -85,7 +85,7 @@ public class Packweaver {
             } else if (a.startsWith("http://") || a.startsWith("https://")
                     || a.startsWith(RELEASE_PREFIX)) {
                 url = a;
-            } else {
+            } else if (!a.startsWith("--")) {
                 dir = Paths.get(a);
             }
         }
@@ -280,7 +280,7 @@ public class Packweaver {
                 contents.put(path, sha1);
             } else if (path.startsWith("overrides/")) {
                 String inst = path.substring("overrides/".length());
-                if (!inst.isEmpty()) {
+                if (!inst.isEmpty() && !otherSide(f, env)) {
                     tasks.add(new Task(inst, url + "/" + enc(path), sha1));
                 }
             } else if (isDocument(path)) {
@@ -747,7 +747,7 @@ public class Packweaver {
                 }
             } else if (path.startsWith("overrides/")) {
                 String inst = path.substring("overrides/".length());
-                if (inst.isEmpty()) {
+                if (inst.isEmpty() || otherSide(f, env)) {
                     continue;
                 }
                 in.tasks.add(new Task(inst, null, str(f.get("sha1"))));
@@ -792,6 +792,12 @@ public class Packweaver {
     private static String datapackFolder(Map<String, Object> manifest) {
         String folder = manifest == null ? null : safeRel(str(manifest.get("datapacks")));
         return folder == null ? "datapacks" : folder;
+    }
+
+    private static boolean otherSide(Map<String, Object> file, String env) {
+        String side = str(file.get("side"));
+        return ("server".equals(env) && "client".equals(side))
+                || ("client".equals(env) && "server".equals(side));
     }
 
     private static Task contentTask(String cp, Map<String, Object> m, String env, String datapacks) {

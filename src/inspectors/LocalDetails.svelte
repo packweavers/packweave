@@ -1,14 +1,16 @@
 <script lang="ts">
-	import { deleteLocalFile } from '@/lib/flows/content'
+	import { localSide } from '@/lib/content/rows'
+	import { deleteLocalFile, setLocalSide } from '@/lib/flows/content'
 	import { content } from '@/lib/state/content.svelte'
 	import { ws } from '@/lib/state/workspace.svelte'
 	import type { ArchiveDep, LocalContent } from '@/lib/tauri/types'
 	import { reveal } from '@/lib/tauri/windows'
-	import { bytes, loaderName } from '@/lib/util/format'
+	import { bytes, loaderName, SIDE_OPTIONS } from '@/lib/util/format'
 	import { join } from '@/lib/util/path'
 	import { fileManager } from '@/lib/util/platform'
 	import ModIcon from '@/ui/ModIcon.svelte'
 	import { pending } from '@/ui/pending'
+	import Select from '@/ui/Select.svelte'
 
 	import ConfigList from './ConfigList.svelte'
 
@@ -19,12 +21,25 @@
 	let { file }: Props = $props()
 
 	const meta = $derived(file.meta)
+	const side = $derived(localSide(file, ws.manifest?.overrideSides ?? {}))
+	const chosen = $derived(ws.manifest?.overrideSides?.[file.relPath] ?? 'auto')
+	const sideOptions = $derived(
+		SIDE_OPTIONS.map((o) =>
+			o.value === 'auto' && chosen === 'auto' && side !== 'auto'
+				? { ...o, label: `${o.label} · ${sideLabel(side)}` }
+				: o,
+		),
+	)
 	const deps = $derived(
 		(meta?.dependencies ?? []).filter((d) => d.kind === 'required' || d.kind === 'optional'),
 	)
 	const conflicts = $derived(
 		(meta?.dependencies ?? []).filter((d) => d.kind === 'incompatible' || d.kind === 'discouraged'),
 	)
+
+	function sideLabel(value: string): string {
+		return SIDE_OPTIONS.find((o) => o.value === value)?.label ?? value
+	}
 
 	function normalize(text: string): string {
 		return text.toLowerCase().replace(/[^a-z0-9]/g, '')
@@ -79,11 +94,19 @@
 				<span class="k">Minecraft</span><span class="v mono">{meta.minecraft}</span>
 			</div>
 		{/if}
-		{#if meta?.side}
+		{#if file.projectType === 'mod'}
 			<div class="kv">
-				<span class="k">Side</span><span class="v"
-					>{meta.side === 'client' ? 'Client' : 'Server'}</span
-				>
+				<span class="k">Side</span>
+				<Select
+					options={sideOptions}
+					value={chosen}
+					class="grow"
+					onchange={(next) => void setLocalSide(file, next)}
+				/>
+			</div>
+		{:else if side !== 'auto'}
+			<div class="kv">
+				<span class="k">Side</span><span class="v">{sideLabel(side)}</span>
 			</div>
 		{/if}
 		{#if meta?.authors?.length}
@@ -141,5 +164,11 @@
 <style>
 	.description {
 		margin-bottom: 8px;
+	}
+
+	.kv :global(.grow) {
+		flex: 1;
+		min-width: 0;
+		height: 26px;
 	}
 </style>

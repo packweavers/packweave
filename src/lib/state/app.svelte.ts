@@ -38,7 +38,9 @@ class AppState {
 		this.systemDark = media.matches
 		media.addEventListener('change', (e) => (this.systemDark = e.matches))
 		try {
-			this.prefs = parsePrefs(await readPrefs())
+			const raw = await readPrefs()
+			this.prefs = parsePrefs(raw)
+			if (JSON.stringify(this.prefs) !== JSON.stringify(JSON.parse(raw))) this.save()
 		} catch (error) {
 			this.prefs = defaultPrefs()
 			toasts.error(error)

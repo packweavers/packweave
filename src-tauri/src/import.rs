@@ -88,6 +88,7 @@ async fn import_mrpack(mr: &Modrinth, archive: &mut Archive, dest: &Path) -> Res
         loader_version,
         channel: crate::manifest::Channel::Release,
         datapacks: None,
+        override_sides: None,
         packweave_md: true,
         format_version: 0,
     };
@@ -240,6 +241,7 @@ fn import_curseforge(archive: &mut Archive, dest: &Path) -> Result<Manifest> {
         loader_version,
         channel: crate::manifest::Channel::Release,
         datapacks: None,
+        override_sides: None,
         packweave_md: true,
         format_version: 0,
     };
@@ -385,6 +387,7 @@ async fn import_prism(
         loader_version,
         channel: crate::manifest::Channel::Release,
         datapacks: None,
+        override_sides: None,
         packweave_md: true,
         format_version: 0,
     };

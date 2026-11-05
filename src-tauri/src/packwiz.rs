@@ -515,6 +515,7 @@ pub fn convert(src: &Path, dest: &Path) -> Result<(Manifest, Converted)> {
         loader_version,
         channel: manifest::Channel::Release,
         datapacks,
+        override_sides: None,
         packweave_md: true,
         format_version: 0,
     };

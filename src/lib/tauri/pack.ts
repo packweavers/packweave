@@ -47,6 +47,10 @@ export function setDatapackFolder(dir: string, folder: string): Promise<Manifest
 	return call('set_datapack_folder', { path: dir, folder })
 }
 
+export function setOverrideSide(dir: string, rel: string, side: string): Promise<Manifest> {
+	return call('set_override_side', { path: dir, rel, side })
+}
+
 export function preservePatterns(dir: string): Promise<string[]> {
 	return call('preserve_patterns', { path: dir })
 }

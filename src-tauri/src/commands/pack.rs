@@ -32,6 +32,7 @@ pub async fn create_pack(
         loader_version,
         channel: manifest::Channel::Release,
         datapacks: None,
+        override_sides: None,
         packweave_md: true,
         format_version: manifest::FORMAT_VERSION,
     };
@@ -295,6 +296,35 @@ pub async fn set_datapack_folder(path: String, folder: String) -> Result<Manifes
                 move_datapacks(Path::new(&game), &old, &folder)?;
             }
         }
+        undo::record(&dir, snapshot);
+        Ok(manifest)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn set_override_side(
+    path: String,
+    rel: String,
+    side: String,
+) -> Result<Manifest, String> {
+    if !crate::content::SIDES.contains(&side.as_str()) {
+        return Err(format!(
+            "{side} isn't a side. Use auto, both, client or server."
+        ));
+    }
+    blocking(move || {
+        let dir = PathBuf::from(&path);
+        let mut manifest = manifest::read(&dir)?;
+        let snapshot = Snapshot::pack(&dir, format!("Change the side of {rel}"));
+        let mut sides = manifest.override_sides.take().unwrap_or_default();
+        if side == "auto" {
+            sides.remove(&rel);
+        } else {
+            sides.insert(rel, side);
+        }
+        manifest.override_sides = (!sides.is_empty()).then_some(sides);
+        manifest::write(&dir, &manifest)?;
         undo::record(&dir, snapshot);
         Ok(manifest)
     })

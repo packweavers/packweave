@@ -347,9 +347,8 @@ impl Ctx<'_> {
                 .await
             }
             None => Err(anyhow!(
-                "Provider '{}' is not supported yet ({}).",
-                provider,
-                name
+                "{} can't be resolved yet ({name}).",
+                provider.label()
             )),
         }
     }
@@ -841,19 +840,7 @@ fn build_locked(st: &Crawl) -> Vec<ContentItem> {
             r.client_side.clone().unwrap_or_else(|| "required".into()),
             r.server_side.clone().unwrap_or_else(|| "required".into()),
         );
-        match target.side.as_str() {
-            "client" => server_side = "unsupported".into(),
-            "server" => client_side = "unsupported".into(),
-            "both" => {
-                if client_side == "unsupported" {
-                    client_side = "optional".into();
-                }
-                if server_side == "unsupported" {
-                    server_side = "optional".into();
-                }
-            }
-            _ => {}
-        }
+        crate::content::apply_side(&target.side, &mut client_side, &mut server_side);
         let mut deps: Vec<String> = st
             .dependents
             .get(key)
@@ -1143,6 +1130,7 @@ fn leaf_from_url(t: &Target) -> ContentItem {
     let filename = t
         .url
         .as_deref()
+        .and_then(|u| u.split(['?', '#']).next())
         .and_then(|u| u.rsplit('/').next())
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())

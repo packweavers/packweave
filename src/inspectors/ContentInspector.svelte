@@ -4,8 +4,9 @@
 	import { selection } from '@/lib/state/selection.svelte'
 	import type { Doc } from '@/lib/state/tabs.svelte'
 	import type { ProjectType } from '@/lib/tauri/types'
-	import { listNames, plural, sideName, typeName } from '@/lib/util/format'
+	import { listNames, plural, SIDE_OPTIONS, sideDetail, typeName } from '@/lib/util/format'
 	import { pending } from '@/ui/pending'
+	import Select from '@/ui/Select.svelte'
 
 	import LocalDetails from './LocalDetails.svelte'
 	import ModDetails from './ModDetails.svelte'
@@ -31,7 +32,18 @@
 	)
 	const all = $derived(content.ofType(type))
 	const updates = $derived(mods.filter((m) => content.updates[m.key]).length)
-	const sides = $derived([...new Set(mods.map((m) => sideName(m.clientSide, m.serverSide)))])
+	const sides = $derived([...new Set(mods.map((m) => sideDetail(m.clientSide, m.serverSide)))])
+	const chosen = $derived.by(() => {
+		const set = [...new Set(mods.map((m) => m.side))]
+		return set.length === 1 ? set[0] : ''
+	})
+	const sideOptions = $derived(
+		SIDE_OPTIONS.map((o) =>
+			o.value === 'auto' && chosen === 'auto' && sides.length === 1
+				? { ...o, label: `${o.label} · ${sides[0]}` }
+				: o,
+		),
+	)
 	const enabled = $derived(mods.filter((m) => !m.disabled).length)
 </script>
 
@@ -64,7 +76,18 @@
 	<div class="inspector-body">
 		<section class="inspector-section">
 			<div class="kv">
-				<span class="k">Side</span><span class="v">{sides.length === 1 ? sides[0] : 'Mixed'}</span>
+				<span class="k">Side</span>
+				<Select
+					options={sideOptions}
+					value={chosen}
+					placeholder="Mixed"
+					class="grow"
+					onchange={(side) =>
+						void content.setSide(
+							mods.map((m) => m.key),
+							side,
+						)}
+				/>
 			</div>
 			<div class="kv">
 				<span class="k">Enabled</span><span class="v"
@@ -121,3 +144,11 @@
 		</section>
 	</div>
 {/if}
+
+<style>
+	.kv :global(.grow) {
+		flex: 1;
+		min-width: 0;
+		height: 26px;
+	}
+</style>

@@ -67,6 +67,7 @@ export interface RowInputs {
 	mods: LockedMod[]
 	removed: ItemChange[]
 	local: LocalContent[]
+	overrideSides: Record<string, string>
 	meta: Record<string, ModMeta>
 	updates: Record<string, AvailableUpdate>
 	changeOf: (key: string) => ContentChange | null
@@ -144,13 +145,20 @@ function removedRow(item: ItemChange): ContentRow {
 	}
 }
 
-function sideOf(file: LocalContent): RowSide | null {
-	if (file.meta?.side === 'client') return { client: true, server: false, label: 'Client only' }
-	if (file.meta?.side === 'server') return { client: false, server: true, label: 'Server only' }
+export function localSide(file: LocalContent, overrides: Record<string, string>): string {
+	const chosen = overrides[file.relPath]
+	if (chosen && chosen !== 'auto') return chosen
+	return file.meta?.side ?? 'auto'
+}
+
+function sideOf(side: string): RowSide | null {
+	if (side === 'client') return { client: true, server: false, label: 'Client only' }
+	if (side === 'server') return { client: false, server: true, label: 'Server only' }
+	if (side === 'both') return { client: true, server: true, label: 'Client and server' }
 	return null
 }
 
-function localRow(file: LocalContent): ContentRow {
+function localRow(file: LocalContent, input: RowInputs): ContentRow {
 	const meta = file.meta
 	return {
 		id: `local:${file.relPath}`,
@@ -163,7 +171,7 @@ function localRow(file: LocalContent): ContentRow {
 		name: meta?.name ?? file.filename,
 		version: meta?.version ?? '',
 		update: null,
-		side: sideOf(file),
+		side: sideOf(localSide(file, input.overrideSides)),
 		source: 'Override',
 		otherSources: [],
 		usedBy: [],
@@ -176,7 +184,6 @@ function localRow(file: LocalContent): ContentRow {
 
 function keep(row: ContentRow, filter: ContentFilter): boolean {
 	const mod = row.mod
-	const side = row.local?.meta?.side
 	switch (filter) {
 		case 'all':
 			return true
@@ -189,9 +196,9 @@ function keep(row: ContentRow, filter: ContentFilter): boolean {
 		case 'dependencies':
 			return mod?.dependencyType === 'dependency'
 		case 'client':
-			return side === 'client' || (!!mod && mod.serverSide === 'unsupported')
+			return !!row.side && row.side.client && !row.side.server
 		case 'server':
-			return side === 'server' || (!!mod && mod.clientSide === 'unsupported')
+			return !!row.side && row.side.server && !row.side.client
 		case 'disabled':
 			return mod?.disabled === true
 		case 'pinned':
@@ -211,7 +218,7 @@ export function buildRows(
 	const rows = [
 		...input.mods.filter((m) => m.projectType === type).map((m) => modRow(m, input)),
 		...input.removed.filter((r) => r.projectType === type).map(removedRow),
-		...input.local.filter((f) => f.projectType === type).map(localRow),
+		...input.local.filter((f) => f.projectType === type).map((f) => localRow(f, input)),
 	]
 	return rows
 		.filter((row) => keep(row, filter))

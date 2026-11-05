@@ -154,12 +154,19 @@
 		const since = tag
 		void git.head
 		if (!dir || !since) return
+		let live = true
 		void compare(dir, since, 'HEAD')
-			.then((c) => (diff = c.pack))
+			.then((c) => {
+				if (live) diff = c.pack
+			})
 			.catch((error) => {
+				if (!live) return
 				diff = null
 				tasks.fail('Comparing with the last release', error)
 			})
+		return () => {
+			live = false
+		}
 	})
 
 	function update(change: (r: typeof prefs) => void): void {
@@ -222,10 +229,10 @@
 		if (busy || !found) return null
 		if (found.visibility === 'missing') {
 			return found.signedIn
-				? 'Not found, or your GitHub sign-in can’t see it'
-				: 'Not found. If it’s private, sign in to GitHub to check'
+				? "Not found, or your GitHub sign-in can't see it"
+				: "Not found. If it's private, sign in to GitHub to check."
 		}
-		if (found.visibility === 'unknown') return 'Couldn’t reach GitHub to check it'
+		if (found.visibility === 'unknown') return "Couldn't reach GitHub to check it"
 		return null
 	}
 
@@ -240,7 +247,7 @@
 
 	const tokenHint = $derived.by(() => {
 		if (savedDistToken && tokenWorks === false) {
-			return `This token can’t read ${repoName}. Give it read access to ${repoName}`
+			return `This token can't read ${repoName}. Give it read access to ${repoName}.`
 		}
 		return ''
 	})
@@ -355,7 +362,7 @@
 					onchange={saveDistToken}
 				/>
 				{#if savedDistToken && tokenWorks === false}
-					<span class="tag removed">✗ can’t read</span>
+					<span class="tag removed">✗ can't read</span>
 				{:else if savedDistToken}
 					<span class="tag added">✓ saved</span>
 				{:else if access?.visibility === 'private'}
@@ -381,7 +388,7 @@
 			<div class="line small hint">
 				{prefs.url || !rawUrl
 					? 'Players sync to whatever this URL serves'
-					: 'Empty uses the default branch. Players get every push'}
+					: 'Empty uses the default branch. Players get every push.'}
 			</div>
 		{/if}
 	</section>
@@ -416,22 +423,18 @@
 			/>Prism / MultiMC instance <span class="mono small">.zip</span>
 			{#if selfUpdating}<span class="tag info">self-updating</span>{/if}</label
 		>
-		<label class="line check"
-			><input
-				type="checkbox"
-				checked={prefs.exports.server}
-				onchange={(e) => update((r) => (r.exports.server = e.currentTarget.checked))}
-			/>Server pack <span class="mono small">.mrpack</span></label
-		>
-		<label class="line check"
-			><input
-				type="checkbox"
-				checked={prefs.exports.client}
-				onchange={(e) => update((r) => (r.exports.client = e.currentTarget.checked))}
-			/>Client pack <span class="mono small">.mrpack</span></label
-		>
+		<div class="line" class:muted={selfUpdating}>
+			<label class="check"
+				><input
+					type="checkbox"
+					checked={prefs.server && !selfUpdating}
+					disabled={selfUpdating}
+					onchange={(e) => update((r) => (r.server = e.currentTarget.checked))}
+				/>Server pack</label
+			>
+		</div>
 		<div class="line small hint">
-			Overrides, like local mods and data packs (if not a .mrpack), go into exports as files.
+			Override files, like local mods, go into each export that matches their side
 		</div>
 		{#if selfUpdating}
 			<div class="line small hint">

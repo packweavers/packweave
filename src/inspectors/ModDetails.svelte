@@ -15,7 +15,7 @@
 	import { ws } from '@/lib/state/workspace.svelte'
 	import { versions as loadVersions } from '@/lib/tauri/catalog'
 	import type { LockedMod, ProviderId, VersionInfo } from '@/lib/tauri/types'
-	import { listNames, providerName, sideDetail } from '@/lib/util/format'
+	import { listNames, providerName, SIDE_OPTIONS, sideDetail } from '@/lib/util/format'
 	import Icon from '@/ui/Icon.svelte'
 	import IconButton from '@/ui/IconButton.svelte'
 	import ModIcon from '@/ui/ModIcon.svelte'
@@ -61,6 +61,13 @@
 		}
 		return list
 	})
+	const sideOptions = $derived(
+		SIDE_OPTIONS.map((o) =>
+			o.value === 'auto' && mod.side === 'auto'
+				? { ...o, label: `${o.label} · ${sideDetail(mod.clientSide, mod.serverSide)}` }
+				: o,
+		),
+	)
 	const provider = $derived(mod.preferred)
 	const projectId = $derived(mod.projectId)
 	const projectType = $derived(mod.projectType)
@@ -68,13 +75,19 @@
 	const loader = $derived(ws.manifest?.loader ?? null)
 
 	$effect(() => {
+		versionList = []
 		if (!minecraft || (provider !== 'modrinth' && provider !== 'curseforge')) return
+		let live = true
 		void loadVersions(projectId, provider, minecraft, versionLoader(projectType, loader))
-			.then((list) => (versionList = list))
-			.catch((error) => {
-				versionList = []
-				tasks.fail(`Loading versions of ${mod.name}`, error)
+			.then((list) => {
+				if (live) versionList = list
 			})
+			.catch((error) => {
+				if (live) tasks.fail(`Loading versions of ${mod.name}`, error)
+			})
+		return () => {
+			live = false
+		}
 	})
 
 	function pickVersion(version: string): void {
@@ -105,10 +118,20 @@
 	</div>
 </div>
 <div class="inspector-body">
+	{#if isPlatform(mod.preferred) && source?.versionId}
+		<section class="inspector-section">
+			<div class="band">Changelog</div>
+			<UpdateNotes
+				projectId={mod.projectId}
+				version={source.versionId}
+				empty="No changelog for this version"
+			/>
+		</section>
+	{/if}
 	{#if update}
 		<section class="inspector-section">
 			<div class="band">
-				Changelog<span class="spacer"></span><span class="small mono band-detail"
+				Update<span class="spacer"></span><span class="small mono band-detail"
 					>{source?.versionNumber ?? '?'} → {update.versionNumber}</span
 				>
 			</div>
@@ -118,7 +141,13 @@
 	<section class="inspector-section">
 		<div class="band">Details</div>
 		<div class="kv">
-			<span class="k">Side</span><span class="v">{sideDetail(mod.clientSide, mod.serverSide)}</span>
+			<span class="k">Side</span>
+			<Select
+				options={sideOptions}
+				value={mod.side}
+				class="grow"
+				onchange={(side) => void content.setSide([mod.key], side)}
+			/>
 		</div>
 		<div class="kv">
 			<span class="k">File</span><span class="v mono">{source?.filename ?? '—'}</span>
@@ -216,7 +245,7 @@
 			/>
 		</label>
 		<label class="kv">
-			<span class="k">Bundle in exports</span>
+			<span class="k">Bundle in Exports</span>
 			<input
 				type="checkbox"
 				class="switch"
@@ -224,15 +253,17 @@
 				onchange={() => void content.setBundled([mod.key], !!mod.noBundle)}
 			/>
 		</label>
-		<p class="small hint">
-			If an export can bundle this mod as an override when unable to find its link.
-		</p>
+		<p class="small hint">Used when an export can't link to its file</p>
 	</section>
 	{#if required.length + optional.length + missing.length > 0}
 		<section class="inspector-section">
 			<div class="band">Dependencies</div>
 			{#each [...required, ...optional] as dep (dep.key)}
-				<button class="item-row" onclick={() => tabs.open('mod', dep.key)}>
+				<button
+					class="item-row"
+					onclick={() => tabs.open('mod', dep.key)}
+					oncontextmenu={(e) => menus.at(e, contentMenu([dep.key]))}
+				>
 					<ModIcon url={content.meta[dep.projectId]?.iconUrl} size={16} />
 					<span class="ellipsis">{dep.name}</span>
 					<span class="tag">{required.includes(dep) ? 'required' : 'optional'}</span>

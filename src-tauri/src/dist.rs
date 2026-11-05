@@ -135,17 +135,14 @@ pub async fn export_instance(
     zip.write_all(mmc_pack(&manifest)?.as_bytes())?;
 
     for m in &lock.mods {
-        if env == "server" && m.server_side == "unsupported" {
-            continue;
-        }
-        if env == "client" && m.client_side == "unsupported" {
+        if m.unsupported_on(env) {
             continue;
         }
         let src = match m.active() {
             Some(s) if !s.download_url.is_empty() && !m.no_bundle => s,
             _ => continue,
         };
-        let bytes = client.get(&src.download_url).send().await?.bytes().await?;
+        let bytes = crate::util::download(&client, &src.download_url, &m.name).await?;
         zip.start_file(
             format!(
                 ".minecraft/{}/{}",
@@ -158,6 +155,10 @@ pub async fn export_instance(
     }
 
     for file in filter.overrides(pack_dir) {
+        let side = crate::instance::override_side(&manifest, &file.rel, &file.path);
+        if !crate::instance::side_allows(&side, env) {
+            continue;
+        }
         zip.start_file(format!(".minecraft/{}", file.rel), options)?;
         zip.write_all(&std::fs::read(&file.path)?)?;
     }

@@ -1,5 +1,6 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use ts_rs::TS;
 
@@ -22,6 +23,9 @@ pub struct Manifest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub datapacks: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub override_sides: Option<BTreeMap<String, String>>,
     #[serde(default = "enabled", skip_serializing_if = "is_enabled")]
     pub packweave_md: bool,
     #[serde(default, skip_serializing_if = "crate::util::is_zero")]
@@ -75,7 +79,7 @@ pub fn path_for(dir: &Path) -> PathBuf {
 pub fn read(dir: &Path) -> Result<Manifest> {
     let p = path_for(dir);
     let text = std::fs::read_to_string(&p)
-        .map_err(|e| anyhow::anyhow!("Could not read {}: {e}", p.display()))?;
+        .map_err(|e| anyhow::anyhow!("Couldn't read {}: {e}", p.display()))?;
     if let Ok(manifest) = serde_json::from_str::<Manifest>(&text) {
         return Ok(manifest);
     }

@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde_json::{json, Map, Value};
 use sha1::{Digest, Sha1};
 use sha2::Sha512;
@@ -37,7 +37,7 @@ fn file_entry(path: &str, url: &str, sha1: &str, sha512: &str, size: u64, m: &Lo
         "path": path,
         "hashes": { "sha1": sha1, "sha512": sha512 },
         "env": {
-            "client": env_value(&m.client_side),
+            "client": client_env(&m.client_side),
             "server": env_value(&m.server_side),
         },
         "downloads": [url],
@@ -62,7 +62,7 @@ pub fn export_selfupdate(
     let index = json!({
         "formatVersion": 1,
         "game": "minecraft",
-        "versionId": manifest.version,
+        "versionId": "",
         "name": manifest.name,
         "files": [],
         "dependencies": Value::Object(deps),
@@ -91,18 +91,26 @@ pub fn export_selfupdate(
     Ok(())
 }
 
+fn override_folder(env: &str, server: bool) -> Option<&'static str> {
+    match env {
+        "server" if !server => None,
+        "common" if !server => Some("client-overrides"),
+        _ => Some("overrides"),
+    }
+}
+
 pub async fn export(
     lock: &Lockfile,
-    pack_name: &str,
+    manifest: &Manifest,
     version: &str,
     output: &Path,
     env: &str,
     overrides: &[PackFile],
-    folders: &Folders,
 ) -> Result<()> {
     let client = reqwest::Client::builder()
         .user_agent(crate::USER_AGENT)
         .build()?;
+    let folders = Folders::of(manifest);
 
     let mut files: Vec<Value> = Vec::new();
     let mut bundled: Vec<(String, Vec<u8>)> = Vec::new();
@@ -127,15 +135,7 @@ pub async fn export(
             }
         }
 
-        let bytes = client
-            .get(&src.download_url)
-            .send()
-            .await
-            .and_then(|r| r.error_for_status())
-            .with_context(|| format!("downloading {}", m.name))?
-            .bytes()
-            .await
-            .with_context(|| format!("downloading {}", m.name))?;
+        let bytes = crate::util::download(&client, &src.download_url, &m.name).await?;
 
         match allowed {
             Some(url) => {
@@ -150,7 +150,12 @@ pub async fn export(
                     m,
                 ));
             }
-            None => bundled.push((path, bytes.to_vec())),
+            None => {
+                let folder = override_folder(env, m.server_side != "unsupported");
+                if let Some(folder) = folder {
+                    bundled.push((format!("{folder}/{path}"), bytes));
+                }
+            }
         }
     }
 
@@ -164,7 +169,7 @@ pub async fn export(
         "formatVersion": 1,
         "game": "minecraft",
         "versionId": version,
-        "name": pack_name,
+        "name": manifest.name,
         "files": files,
         "dependencies": Value::Object(deps),
     });
@@ -176,17 +181,20 @@ pub async fn export(
     zip.write_all(serde_json::to_string_pretty(&index)?.as_bytes())?;
 
     let mut written: HashSet<String> = HashSet::new();
-    for (rel, bytes) in &bundled {
-        let name = format!("overrides/{rel}");
+    for (name, bytes) in &bundled {
         if !written.insert(name.clone()) {
             continue;
         }
-        zip.start_file(name, options)?;
+        zip.start_file(name.as_str(), options)?;
         zip.write_all(bytes)?;
     }
 
     for file in overrides {
-        let name = format!("overrides/{}", file.rel);
+        let side = crate::instance::override_side(manifest, &file.rel, &file.path);
+        let Some(folder) = override_folder(env, side != "client") else {
+            continue;
+        };
+        let name = format!("{folder}/{}", file.rel);
         if !written.insert(name.clone()) {
             continue;
         }
@@ -238,6 +246,13 @@ fn loader_key(loader: &str) -> Option<&'static str> {
         "forge" => Some("forge"),
         "neoforge" => Some("neoforge"),
         _ => None,
+    }
+}
+
+fn client_env(side: &str) -> &str {
+    match side {
+        "optional" => "optional",
+        _ => "required",
     }
 }
 

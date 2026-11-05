@@ -13,6 +13,7 @@ import { ws } from '@/lib/state/workspace.svelte'
 import { errorText } from '@/lib/tauri/call'
 import { convertSearch } from '@/lib/tauri/catalog'
 import { addDropped, identifyDropped, previewChange } from '@/lib/tauri/content'
+import { setOverrideSide } from '@/lib/tauri/pack'
 import type {
 	ConvertCandidate,
 	LocalContent,
@@ -21,7 +22,7 @@ import type {
 	ProviderId,
 	VersionPin,
 } from '@/lib/tauri/types'
-import { plural, providerName } from '@/lib/util/format'
+import { plural, providerName, SIDE_OPTIONS } from '@/lib/util/format'
 
 import { deleteFile } from './files'
 import { chooseDatapackFolder } from './pack'
@@ -191,4 +192,21 @@ export async function restoreRemoved(path: string): Promise<void> {
 
 export async function deleteLocalFile(file: LocalContent): Promise<void> {
 	if (await deleteFile(`overrides/${file.relPath}`)) await content.refreshUnpublished()
+}
+
+export async function setLocalSide(file: LocalContent, side: string): Promise<void> {
+	const dir = ws.dir
+	if (!dir) return
+	try {
+		ws.manifest = await setOverrideSide(dir, file.relPath, side)
+		ws.changed()
+		void content.refreshHistory()
+		const name = file.meta?.name ?? file.filename
+		const label = SIDE_OPTIONS.find((o) => o.value === side)?.label.toLowerCase() ?? side
+		toasts.show(side === 'auto' ? `Reset the side of ${name}` : `Set ${name} to ${label}`, [
+			{ label: 'Undo', command: 'edit.undo', run: () => void content.undo() },
+		])
+	} catch (error) {
+		toasts.error(error)
+	}
 }

@@ -1,6 +1,6 @@
 use serde::Serialize;
 use std::collections::HashSet;
-use std::io::Read;
+use std::io::{Read, Seek};
 use std::path::Path;
 use ts_rs::TS;
 
@@ -81,7 +81,12 @@ pub fn read_archive(path: &Path) -> Option<ModMeta> {
     Some(finish(&mut zip, meta))
 }
 
-fn parse_archive(zip: &mut zip::ZipArchive<std::fs::File>) -> Option<ModMeta> {
+pub fn read_bytes(bytes: &[u8]) -> Option<ModMeta> {
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).ok()?;
+    parse_archive(&mut zip)
+}
+
+fn parse_archive<R: Read + Seek>(zip: &mut zip::ZipArchive<R>) -> Option<ModMeta> {
     let names: HashSet<String> = zip.file_names().map(String::from).collect();
 
     if names.contains("fabric.mod.json") {
@@ -100,9 +105,12 @@ fn parse_archive(zip: &mut zip::ZipArchive<std::fs::File>) -> Option<ModMeta> {
         None
     };
     if names.contains("META-INF/neoforge.mods.toml") {
-        if let Some(m) = entry(zip, "META-INF/neoforge.mods.toml")
+        if let Some(mut m) = entry(zip, "META-INF/neoforge.mods.toml")
             .and_then(|s| parse_forge_toml(&s, "neoforge", manifest_ver.as_deref()))
         {
+            if m.side.is_none() {
+                m.side = neoforge_dist(zip, &names);
+            }
             return Some(m);
         }
     }
@@ -188,7 +196,41 @@ fn provided(v: Option<&serde_json::Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn entry(zip: &mut zip::ZipArchive<std::fs::File>, name: &str) -> Option<String> {
+const NEOFORGE_MOD: &[u8] = b"Lnet/neoforged/fml/common/Mod;";
+
+fn neoforge_dist<R: Read + Seek>(
+    zip: &mut zip::ZipArchive<R>,
+    names: &HashSet<String>,
+) -> Option<String> {
+    let mut dists: Vec<Vec<String>> = Vec::new();
+    for name in names.iter().filter(|n| n.ends_with(".class")) {
+        let Ok(mut file) = zip.by_name(name) else {
+            continue;
+        };
+        let mut bytes = Vec::new();
+        if file.read_to_end(&mut bytes).is_err() {
+            continue;
+        }
+        if !bytes.windows(NEOFORGE_MOD.len()).any(|w| w == NEOFORGE_MOD) {
+            continue;
+        }
+        if let Some(found) = crate::classfile::mod_dists(&bytes, NEOFORGE_MOD) {
+            dists.extend(found);
+        }
+    }
+    let side_of = |dist: &Vec<String>| match dist.as_slice() {
+        [only] if only == "CLIENT" => Some("client"),
+        [only] if only == "DEDICATED_SERVER" => Some("server"),
+        _ => None,
+    };
+    let first = side_of(dists.first()?)?;
+    dists
+        .iter()
+        .all(|d| side_of(d) == Some(first))
+        .then(|| first.to_string())
+}
+
+fn entry<R: Read + Seek>(zip: &mut zip::ZipArchive<R>, name: &str) -> Option<String> {
     let mut f = zip.by_name(name).ok()?;
     let mut s = String::new();
     f.read_to_string(&mut s).ok()?;
@@ -356,7 +398,7 @@ fn parse_forge_toml(s: &str, loader: &str, manifest_ver: Option<&str>) -> Option
         .filter_map(|entry| toml_str(entry.get("modId")))
         .collect();
     m.icon_path = toml_str(first.get("logoFile")).or_else(|| toml_str(v.get("logoFile")));
-    if toml_str(first.get("displayTest")).as_deref() == Some("IGNORE_SERVER_VERSION") {
+    if v.get("clientSideOnly").and_then(|x| x.as_bool()) == Some(true) {
         m.side = Some("client".into());
     }
     let mut version = toml_str(first.get("version"));

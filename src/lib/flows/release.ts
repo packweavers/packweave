@@ -43,6 +43,10 @@ function onCurseforge(release: ReleasePrefs): boolean {
 	return release.updates === 'none' && release.publish.curseforge
 }
 
+function side(release: ReleasePrefs): 'common' | 'server' {
+	return release.server && release.updates === 'none' ? 'server' : 'common'
+}
+
 export function publishes(release: ReleasePrefs): boolean {
 	return onGithub(release) || onModrinth(release) || onCurseforge(release)
 }
@@ -69,48 +73,38 @@ async function plannedExports(
 ): Promise<ExportJob[]> {
 	const { exports } = release
 	const url = await updateUrl(dir, release)
-	const base = `${slugify(ws.name)}-${version}`
+	const name = slugify(ws.name)
+	const base = `${name}-${version}`
+	const suffix = side(release) === 'server' ? '-server' : ''
+	const updating = `${url ? name : base}${suffix}`
+	const env = side(release)
 	const jobs: ExportJob[] = []
 	if (exports.mrpack) {
 		jobs.push({
 			label: 'Modrinth pack',
-			file: `${base}.mrpack`,
+			file: `${updating}.mrpack`,
 			run: (dir, out) =>
 				url
 					? releaseApi.exportMrpackSelfUpdate(dir, out, url)
-					: releaseApi.exportMrpack(dir, out, 'common'),
+					: releaseApi.exportMrpack(dir, out, env),
 		})
 	}
 	if (exports.curseforge) {
 		jobs.push({
 			label: 'CurseForge pack',
-			file: `${base}-curseforge.zip`,
+			file: `${updating}-curseforge.zip`,
 			run: (dir, out) =>
 				url
 					? releaseApi.exportCurseforgeSelfUpdate(dir, out, url)
-					: releaseApi.exportCurseforge(dir, out, 'common'),
+					: releaseApi.exportCurseforge(dir, out, env),
 		})
 	}
 	if (exports.instance) {
 		jobs.push({
 			label: 'Prism instance',
-			file: `${base}-prism.zip`,
+			file: `${updating}-prism.zip`,
 			run: (dir, out) =>
-				url ? releaseApi.exportDist(dir, out, url) : releaseApi.exportInstance(dir, out, 'client'),
-		})
-	}
-	if (exports.server) {
-		jobs.push({
-			label: 'Server pack',
-			file: `${base}-server.mrpack`,
-			run: (dir, out) => releaseApi.exportMrpack(dir, out, 'server'),
-		})
-	}
-	if (exports.client) {
-		jobs.push({
-			label: 'Client pack',
-			file: `${base}-client.mrpack`,
-			run: (dir, out) => releaseApi.exportMrpack(dir, out, 'client'),
+				url ? releaseApi.exportDist(dir, out, url) : releaseApi.exportInstance(dir, out, env),
 		})
 	}
 	return jobs
@@ -223,14 +217,22 @@ function blocker(release: ReleasePrefs, repo: string | null): string | null {
 	return null
 }
 
+async function draftMessage(dir: string): Promise<string | null> {
+	const draft = git.message.trim()
+	if (!draft) return null
+	const [last] = await gitApi.log(dir, 1).catch(() => [])
+	return last?.subject === draft.split('\n')[0].trim() ? null : draft
+}
+
 async function pushedCommit(dir: string, plan: ReleasePlan, tag: string): Promise<string | null> {
 	if (!git.isRepo) return null
 	await writeVersion(plan)
 	await Promise.all([git.refresh(), content.refreshChanges()])
 	if (git.changes.length > 0 || (git.status?.ahead ?? 0) > 0 || !git.status?.upstream) {
+		const draft = await draftMessage(dir)
 		const answer = await dialogs.open(CommitPushDialog, {
 			title: 'Commit and push before publishing?',
-			message: `Release ${tag}`,
+			message: draft ?? `Release ${tag}`,
 			selected: git.changes.some((c) => c.path === 'modpack.json') ? ['modpack.json'] : [],
 		})
 		if (!answer) return ''
@@ -240,6 +242,7 @@ async function pushedCommit(dir: string, plan: ReleasePlan, tag: string): Promis
 				return true
 			})
 			if (!pushed) return ''
+			if (draft && answer.files.length > 0 && answer.message === draft) git.message = ''
 		}
 	}
 	const commit = await gitApi.upstreamHead(dir)
@@ -253,14 +256,14 @@ async function pushedCommit(dir: string, plan: ReleasePlan, tag: string): Promis
 	}
 	if (pushed.version !== plan.version) {
 		toasts.info(
-			`The pushed modpack.json is version ${pushed.version ?? 'unknown'}. Push the version change first`,
+			`The pushed modpack.json is version ${pushed.version ?? 'unknown'}. Push the version change first.`,
 		)
 		return ''
 	}
 	const channel = pushed.channel ?? 'release'
 	if (channel !== plan.channel) {
 		toasts.info(
-			`The pushed modpack.json is on the ${channel} channel. Push the channel change first`,
+			`The pushed modpack.json is on the ${channel} channel. Push the channel change first.`,
 		)
 		return ''
 	}
@@ -299,7 +302,9 @@ async function bundlingNotes(dir: string, release: ReleasePrefs): Promise<string
 	const notes: string[] = []
 	for (const target of targets) {
 		const found = await tasks
-			.run('Checking what gets bundled', () => releaseApi.publishBundling(target, dir, 'common'))
+			.run('Checking what gets bundled', () =>
+				releaseApi.publishBundling(target, dir, side(release)),
+			)
 			.catch(tasks.or('Checking what gets bundled', null))
 		if (found) notes.push(...bundlingText(target, found))
 	}
@@ -381,7 +386,7 @@ export async function publish(plan: ReleasePlan): Promise<void> {
 						release.modrinthProject,
 						plan.version,
 						plan.notes,
-						'common',
+						side(release),
 					),
 				)
 			}
@@ -393,7 +398,7 @@ export async function publish(plan: ReleasePlan): Promise<void> {
 						release.curseforgeProject,
 						plan.version,
 						plan.notes,
-						'common',
+						side(release),
 					),
 				)
 			}

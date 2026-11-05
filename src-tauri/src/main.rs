@@ -3,6 +3,7 @@
 mod bulkadd;
 mod cache;
 mod cfpack;
+mod classfile;
 mod commands;
 mod configs;
 mod content;
@@ -144,6 +145,7 @@ fn main() {
             commands::clone_pack,
             commands::save_manifest,
             commands::set_datapack_folder,
+            commands::set_override_side,
             commands::preserve_patterns,
             commands::preserve_update,
             commands::preserve_reset,
@@ -167,6 +169,7 @@ fn main() {
             commands::set_content_disabled,
             commands::set_content_pinned,
             commands::set_content_bundled,
+            commands::set_content_side,
             commands::set_source_version,
             commands::set_content_explicit,
             commands::set_content_versions,

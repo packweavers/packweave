@@ -344,9 +344,7 @@ pub async fn set_content_disabled(
         &dir,
         |dir| Snapshot::pack(dir, label),
         |dir| {
-            for key in &keys {
-                content::set_disabled(dir, key, disabled)?;
-            }
+            content::update_items(dir, &keys, |item| item.disabled = disabled)?;
             Ok(())
         },
     )
@@ -370,9 +368,7 @@ pub async fn set_content_pinned(
         &dir,
         |dir| Snapshot::pack(dir, label),
         |dir| {
-            for key in &keys {
-                content::set_pinned(dir, key, pinned)?;
-            }
+            content::update_items(dir, &keys, |item| item.pinned = pinned)?;
             Ok(())
         },
     )
@@ -396,9 +392,35 @@ pub async fn set_content_bundled(
         &dir,
         |dir| Snapshot::pack(dir, label),
         |dir| {
-            for key in &keys {
-                content::set_no_bundle(dir, key, !bundled)?;
-            }
+            content::update_items(dir, &keys, |item| item.no_bundle = !bundled)?;
+            Ok(())
+        },
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn set_content_side(
+    mr: State<'_, Modrinth>,
+    cf: State<'_, CurseForge>,
+    path: String,
+    keys: Vec<String>,
+    side: String,
+) -> Result<PackResolved, String> {
+    if !content::SIDES.contains(&side.as_str()) {
+        return Err(format!(
+            "{side} isn't a side. Use auto, both, client or server."
+        ));
+    }
+    let dir = PathBuf::from(&path);
+    let label = format!("Change the side of {}", content::names_label(&dir, &keys));
+    mutate(
+        &mr,
+        &cf,
+        &dir,
+        |dir| Snapshot::pack(dir, label),
+        |dir| {
+            content::update_items(dir, &keys, |item| item.side = side.clone())?;
             Ok(())
         },
     )
@@ -415,7 +437,11 @@ pub async fn set_source_version(
     version: Option<String>,
 ) -> Result<PackResolved, String> {
     let dir = PathBuf::from(&path);
-    let label = format!("Change {} on {provider}", content::name_of(&dir, &key));
+    let label = format!(
+        "Change {} on {}",
+        content::name_of(&dir, &key),
+        provider.label()
+    );
     mutate(
         &mr,
         &cf,

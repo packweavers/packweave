@@ -17,6 +17,7 @@ import {
 	setExplicit,
 	setPinned,
 	setPreferredSource,
+	setSide,
 	setSourceVersion,
 	setVersions,
 	undo,
@@ -41,7 +42,7 @@ import type {
 	Validation,
 	VersionPin,
 } from '@/lib/tauri/types'
-import { listNames, plural, providerName, typeName } from '@/lib/util/format'
+import { listNames, plural, providerName, SIDE_OPTIONS, typeName } from '@/lib/util/format'
 
 import { app } from './app.svelte'
 import { tasks } from './tasks.svelte'
@@ -145,6 +146,7 @@ class ContentState {
 				(c) => c.kind === 'removed' && !present.has(c.path),
 			),
 			local: this.unpublished,
+			overrideSides: ws.manifest?.overrideSides ?? {},
 			meta: this.meta,
 			updates: this.updates,
 			changeOf: (key) => this.changeWordOf(key),
@@ -344,9 +346,9 @@ class ContentState {
 			if (moved.length === 0) return `Added ${names}`
 			if (items.length === 1) {
 				const [m] = moved
-				return `Added ${m.name} to ${typeName(m.projectType, true)}: its file is a ${typeName(m.projectType).toLowerCase()}`
+				return `Added ${m.name} to ${typeName(m.projectType, true).toLowerCase()}: its file is a ${typeName(m.projectType).toLowerCase()}`
 			}
-			const where = moved.map((m) => `${m.name} to ${typeName(m.projectType, true)}`)
+			const where = moved.map((m) => `${m.name} to ${typeName(m.projectType, true).toLowerCase()}`)
 			return `Added ${names}. Moved to match their files: ${where.join(', ')}`
 		}
 		return this.#mutate('Adding content', added, (dir) => addContent(dir, items))
@@ -369,6 +371,13 @@ class ContentState {
 		return this.#mutate(verb, `${verb} ${names}`, (dir) => setPinned(dir, keys, pinned))
 	}
 
+	setSide(keys: string[], side: string): Promise<boolean> {
+		const names = this.#names(keys)
+		const label = SIDE_OPTIONS.find((o) => o.value === side)?.label.toLowerCase() ?? side
+		const done = side === 'auto' ? `Reset the side of ${names}` : `Set ${names} to ${label}`
+		return this.#mutate('Updating', done, (dir) => setSide(dir, keys, side))
+	}
+
 	setSourceVersion(key: string, provider: ProviderId, version: string | null): Promise<boolean> {
 		const name = this.#names([key])
 		return this.#mutate(
@@ -380,7 +389,7 @@ class ContentState {
 
 	setBundled(keys: string[], bundled: boolean): Promise<boolean> {
 		const names = this.#names(keys)
-		const done = bundled ? `Bundling ${names} in exports` : `Leaving ${names} out of exports`
+		const done = bundled ? `Bundling ${names} in Exports` : `Leaving ${names} out of Exports`
 		return this.#mutate('Updating', done, (dir) => setBundled(dir, keys, bundled))
 	}
 
@@ -474,7 +483,7 @@ class ContentState {
 			if (result.resolved) this.apply(result.resolved)
 			ws.changed()
 			void this.refreshHistory()
-			toasts.show(`${back ? 'Undid' : 'Redid'} "${result.label}"`, [
+			toasts.show(`${back ? 'Undid' : 'Redid'} “${result.label}”`, [
 				back
 					? { label: 'Redo', command: 'edit.redo', run: () => void this.redo() }
 					: { label: 'Undo', command: 'edit.undo', run: () => void this.undo() },

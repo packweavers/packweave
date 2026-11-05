@@ -80,6 +80,8 @@ pub struct LockedMod {
     pub optional_dependents: Vec<String>,
     pub client_side: String,
     pub server_side: String,
+    #[serde(default = "crate::content::auto_side")]
+    pub side: String,
     #[serde(default)]
     pub disabled: bool,
     #[serde(default)]
@@ -90,8 +92,7 @@ pub struct LockedMod {
 
 impl LockedMod {
     pub fn unsupported_on(&self, env: &str) -> bool {
-        (env == "server" && self.server_side == "unsupported")
-            || (env == "client" && self.client_side == "unsupported")
+        env == "server" && self.server_side == "unsupported"
     }
 
     pub fn active(&self) -> Option<&SourceFile> {
@@ -174,7 +175,9 @@ pub fn read(dir: &Path) -> Result<Lockfile> {
             if let Some(cm) = cached.get(&m.key) {
                 for (prov, src) in m.sources.iter_mut() {
                     if src.download_url.is_empty() {
-                        if let Some(cs) = cm.sources.get(prov) {
+                        if let Some(cs) = cm.sources.get(prov).filter(|cs| {
+                            src.version_id.is_empty() || cs.version_id == src.version_id
+                        }) {
                             src.version_id = cs.version_id.clone();
                             src.version_number = cs.version_number.clone();
                             src.filename = cs.filename.clone();

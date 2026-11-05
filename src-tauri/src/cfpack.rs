@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use serde_json::{json, Map, Value};
 use std::collections::HashSet;
 use std::io::Write;
@@ -55,7 +55,7 @@ pub fn export_selfupdate(
         &manifest.loader,
         manifest.loader_version.as_deref(),
         &manifest.name,
-        &manifest.version,
+        "",
         &[],
     );
 
@@ -78,7 +78,16 @@ pub fn export_selfupdate(
     Ok(())
 }
 
+fn pack_env(env: &str) -> &str {
+    if env == "server" {
+        "server"
+    } else {
+        "client"
+    }
+}
+
 async fn plan(cf: &CurseForge, lock: &Lockfile, env: &str, folders: &Folders) -> Result<Plan> {
+    let env = pack_env(env);
     let client = reqwest::Client::builder()
         .user_agent(crate::USER_AGENT)
         .build()?;
@@ -117,21 +126,13 @@ async fn plan(cf: &CurseForge, lock: &Lockfile, env: &str, folders: &Folders) ->
             plan.left_out.push(m.name.clone());
             continue;
         }
-        let bytes = client
-            .get(&src.download_url)
-            .send()
-            .await
-            .and_then(|r| r.error_for_status())
-            .with_context(|| format!("downloading {}", m.name))?
-            .bytes()
-            .await
-            .with_context(|| format!("downloading {}", m.name))?;
+        let bytes = crate::util::download(&client, &src.download_url, &m.name).await?;
         let rel = format!("{}/{}", folders.install_dir(m.project_type), src.filename);
         if datapack {
             plan.bundled.push(Bundled {
                 name: m.name.clone(),
                 rel,
-                bytes: bytes.to_vec(),
+                bytes,
             });
             continue;
         }
@@ -140,7 +141,7 @@ async fn plan(cf: &CurseForge, lock: &Lockfile, env: &str, folders: &Folders) ->
             rel,
             is_mod: m.project_type == ProjectType::Mod,
             print: curseforge::cf_fingerprint(&bytes),
-            bytes: bytes.to_vec(),
+            bytes,
             no_bundle: m.no_bundle,
         });
     }
@@ -182,20 +183,19 @@ pub async fn bundling(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn export(
     cf: &CurseForge,
     lock: &Lockfile,
-    pack_name: &str,
+    manifest: &Manifest,
     version: &str,
     output: &Path,
     env: &str,
     overrides: &[PackFile],
-    folders: &Folders,
 ) -> Result<()> {
+    let folders = Folders::of(manifest);
     let Plan {
         entries, bundled, ..
-    } = plan(cf, lock, env, folders).await?;
+    } = plan(cf, lock, env, &folders).await?;
     let files: Vec<Value> = entries
         .iter()
         .map(|e| {
@@ -206,11 +206,11 @@ pub async fn export(
             })
         })
         .collect();
-    let manifest = manifest_json(
+    let cf_manifest = manifest_json(
         &lock.minecraft,
         &lock.loader,
         lock.loader_version.as_deref(),
-        pack_name,
+        &manifest.name,
         version,
         &files,
     );
@@ -219,7 +219,7 @@ pub async fn export(
     let mut zip = zip::ZipWriter::new(file);
     let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
     zip.start_file("manifest.json", options)?;
-    zip.write_all(serde_json::to_string_pretty(&manifest)?.as_bytes())?;
+    zip.write_all(serde_json::to_string_pretty(&cf_manifest)?.as_bytes())?;
     zip.start_file("modlist.html", options)?;
     zip.write_all(modlist_html(&entries).as_bytes())?;
 
@@ -233,6 +233,10 @@ pub async fn export(
         zip.write_all(&b.bytes)?;
     }
     for file in overrides {
+        let side = crate::instance::override_side(manifest, &file.rel, &file.path);
+        if !crate::instance::side_allows(&side, pack_env(env)) {
+            continue;
+        }
         let name = format!("overrides/{}", file.rel);
         if !written.insert(name.clone()) {
             continue;
