@@ -10,8 +10,8 @@
 	<h1 class="title-doc">packweave</h1>
 	<span class="mono">{app.info?.version ?? ''}</span>
 	<p>
-		A Minecraft modpack IDE with git-native packs, Modrinth and CurseForge, two-way instance sync,
-		and one-click publishing.
+		A Minecraft modpack IDE with Git-native packs, Modrinth and CurseForge, two-way instance sync,
+		and one-click publishing
 	</p>
 	<div class="links">
 		<button

@@ -27,7 +27,7 @@ pub fn set_dir(dir: PathBuf) {
 fn branches_dir() -> Result<&'static PathBuf> {
     BRANCHES_DIR
         .get()
-        .ok_or_else(|| anyhow!("the branch folder isn't set up"))
+        .ok_or_else(|| anyhow!("The branch folder isn't set up."))
 }
 
 pub fn list(dir: &Path) -> Result<Vec<Worktree>> {
@@ -92,7 +92,7 @@ fn is_build(path: &Path) -> bool {
 
 pub fn checkout_commit(pack_dir: &Path, commit: &str) -> Result<PathBuf> {
     if commit.len() < 7 || !commit.chars().all(|c| c.is_ascii_hexdigit()) {
-        bail!("{commit} isn't a commit");
+        bail!("{commit} isn't a commit.");
     }
     let main = main_dir(pack_dir);
     let root = builds_dir();
@@ -130,7 +130,7 @@ pub fn checkout_commit(pack_dir: &Path, commit: &str) -> Result<PathBuf> {
 
 pub fn remove_build(pack_dir: &Path, folder: &Path) -> Result<()> {
     if !is_build(folder) {
-        bail!("{} isn't a release build folder", folder.display());
+        bail!("{} isn't a release build folder.", folder.display());
     }
     let main = main_dir(pack_dir);
     let path = folder.to_string_lossy().to_string();
@@ -180,7 +180,7 @@ fn folder_for(main: &Path, branch: &str) -> Result<PathBuf> {
 pub fn open_branch(dir: &Path, branch: &str, start: Option<&str>) -> Result<PathBuf> {
     let branch = branch.trim();
     if branch.is_empty() {
-        bail!("Enter a branch name");
+        bail!("Enter a branch name.");
     }
     let main = main_dir(dir);
     let (local, remote) = match git::split_remote_branch(&main, branch) {

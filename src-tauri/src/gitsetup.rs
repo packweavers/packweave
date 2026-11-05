@@ -124,7 +124,7 @@ fn run_installer() -> Result<()> {
     Command::new("/usr/bin/xcode-select")
         .arg("--install")
         .spawn()
-        .map_err(|e| anyhow::anyhow!("couldn't start the installer: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("Couldn't start the installer: {e}"))?;
     Ok(())
 }
 
@@ -146,7 +146,7 @@ fn run_installer() -> Result<()> {
             "--accept-package-agreements",
         ])
         .output()
-        .map_err(|e| anyhow::anyhow!("couldn't start the installer: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("Couldn't start the installer: {e}"))?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
         let err = if err.trim().is_empty() {
@@ -154,14 +154,14 @@ fn run_installer() -> Result<()> {
         } else {
             err.trim().to_string()
         };
-        bail!("the installer didn't finish: {err}");
+        bail!("The installer didn't finish: {err}");
     }
     Ok(())
 }
 
 #[cfg(target_os = "linux")]
 fn run_installer() -> Result<()> {
-    bail!("Install git with your package manager, then choose Check again.")
+    bail!("Install Git with your package manager, then choose Check again.")
 }
 
 pub fn install() -> Result<GitSetup> {

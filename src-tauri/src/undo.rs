@@ -174,7 +174,7 @@ pub fn redo(pack_dir: &Path) -> Result<Option<String>> {
 fn step(pack_dir: &Path, backwards: bool) -> Result<Option<String>> {
     let mut all = histories()
         .lock()
-        .map_err(|_| anyhow::anyhow!("undo history is unavailable"))?;
+        .map_err(|_| anyhow::anyhow!("Undo history isn't available."))?;
     let history = all.entry(pack_dir.to_path_buf()).or_default();
     let taken = if backwards {
         history.undo.pop()

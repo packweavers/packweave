@@ -88,7 +88,7 @@
 			app.save()
 			toasts.show('Imported a keymap from the clipboard')
 		} catch {
-			toasts.show("The clipboard doesn't hold a keymap", [], 'error')
+			toasts.show("The clipboard doesn't hold a keymap.", [], 'error')
 		}
 	}
 </script>

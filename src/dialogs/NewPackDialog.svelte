@@ -122,8 +122,8 @@
 				placeholder={loaderState === 'loading'
 					? 'Loading…'
 					: loaderState === 'failed'
-						? "Couldn't load versions"
-						: `No ${loaderName(loader)} for Minecraft ${minecraft}`}
+						? "Couldn't load versions."
+						: `No ${loaderName(loader)} for Minecraft ${minecraft}.`}
 				mono
 			/>
 		</div>

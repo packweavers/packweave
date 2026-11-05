@@ -87,7 +87,7 @@
 		try {
 			const newest = (await loaderVersions(manifest.loader, minecraft)).versions[0]
 			if (newest) return { minecraft, loaderVersion: newest }
-			toasts.error(`${loaderName(manifest.loader)} has no version for Minecraft ${minecraft}`)
+			toasts.error(`${loaderName(manifest.loader)} has no version for Minecraft ${minecraft}.`)
 		} catch (error) {
 			toasts.error(error)
 		}

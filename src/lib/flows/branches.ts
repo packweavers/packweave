@@ -86,7 +86,7 @@ export async function newBranch(
 	const main = mainDir()
 	if (!main) return
 	if (!git.isRepo) {
-		toasts.info('Start using Git for this pack first.')
+		toasts.info('Start using Git for this pack first')
 		return
 	}
 	await git.refreshRefs()
@@ -140,7 +140,7 @@ export async function newBranch(
 
 export async function newTestBranch(): Promise<void> {
 	if (!git.isRepo) {
-		toasts.info('Start using Git for this pack first.')
+		toasts.info('Start using Git for this pack first')
 		return
 	}
 	const change = await dialogs.open(TestBranchDialog, {})
@@ -198,7 +198,7 @@ export async function deleteBranch(name: string): Promise<void> {
 	const dir = ws.dir
 	if (!dir) return
 	if (name === git.branch) {
-		toasts.info('Switch this window to another branch first.')
+		toasts.info('Switch this window to another branch first')
 		return
 	}
 	const base = git.branch ?? 'HEAD'
@@ -260,7 +260,7 @@ export async function mergeBranch(from: string): Promise<void> {
 	if (!dir || !git.branch) return
 	const into = git.branch
 	if (git.changes.length > 0) {
-		toasts.info(`Commit or stash the changes on ${into} first.`)
+		toasts.info(`Commit or stash the changes on ${into} first`)
 		return
 	}
 	const compare = await api.compare(dir, into, from).catch((error) => {

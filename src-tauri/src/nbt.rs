@@ -23,14 +23,14 @@ impl Cursor<'_> {
         let v = *self
             .b
             .get(self.pos)
-            .ok_or_else(|| anyhow!("unexpected end of NBT"))?;
+            .ok_or_else(|| anyhow!("The NBT data ends early."))?;
         self.pos += 1;
         Ok(v)
     }
 
     fn take(&mut self, n: usize) -> Result<&[u8]> {
         if self.pos + n > self.b.len() {
-            return Err(anyhow!("unexpected end of NBT"));
+            return Err(anyhow!("The NBT data ends early."));
         }
         let s = &self.b[self.pos..self.pos + n];
         self.pos += n;
@@ -103,7 +103,7 @@ fn preview<T: ToString>(len: usize, vals: &[T]) -> String {
 
 fn read_payload(c: &mut Cursor, t: u8, name: String, depth: u32) -> Result<NbtNode> {
     if depth > 512 {
-        return Err(anyhow!("NBT nesting too deep"));
+        return Err(anyhow!("The NBT data is nested too deeply."));
     }
     let mut node = NbtNode {
         name,
@@ -191,7 +191,7 @@ pub fn parse(bytes: &[u8]) -> Result<NbtNode> {
     let mut c = Cursor { b: &data, pos: 0 };
     let t = c.u8()?;
     if t == 0 || t > 12 {
-        return Err(anyhow!("not an NBT file"));
+        return Err(anyhow!("This isn't an NBT file."));
     }
     let root_name = c.name()?;
     read_payload(&mut c, t, root_name, 0)

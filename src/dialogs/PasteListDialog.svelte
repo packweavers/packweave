@@ -102,7 +102,7 @@
 			bind:value={text}
 			spellcheck="false"></textarea>
 		<p class="small hint">
-			Names, slugs, links or file names. One per line, or separated by commas.
+			Names, slugs, links, or file names. One per line, or separated by commas.
 		</p>
 		{#if app.providerReady('curseforge')}
 			<Segmented

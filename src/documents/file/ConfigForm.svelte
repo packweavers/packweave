@@ -152,7 +152,7 @@
 						<button
 							class="keep"
 							class:on={kept}
-							title={kept ? 'Unlocked: players can edit' : 'Locked: players cannot edit'}
+							title={kept ? 'Unlocked: players can edit' : "Locked: players can't edit"}
 							aria-pressed={kept}
 							onclick={(e) => {
 								e.preventDefault()

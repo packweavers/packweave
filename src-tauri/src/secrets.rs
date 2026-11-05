@@ -24,7 +24,7 @@ fn read_fallback() -> serde_json::Map<String, serde_json::Value> {
 
 fn write_fallback(map: &serde_json::Map<String, serde_json::Value>) -> Result<()> {
     let Some(path) = fallback_file() else {
-        anyhow::bail!("secret storage is unavailable");
+        anyhow::bail!("Secret storage isn't available.");
     };
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -82,7 +82,7 @@ pub fn set(key: &str, value: &str) -> Result<()> {
     match keyring::Entry::new(SERVICE, key).and_then(|entry| entry.set_password(value)) {
         Ok(()) => fallback_delete(key),
         Err(keyring_err) => fallback_set(key, value).map_err(|_| {
-            anyhow::anyhow!("couldn't store the token in the system keychain: {keyring_err}")
+            anyhow::anyhow!("Couldn't save the token in the system keychain: {keyring_err}")
         }),
     }
 }

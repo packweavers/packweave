@@ -49,7 +49,7 @@ pub fn resolve(root: &str, rel: &str) -> Result<PathBuf> {
             )
         })
     {
-        return Err(anyhow!("path escapes the root: {rel}"));
+        return Err(anyhow!("{rel} is outside the folder."));
     }
     let mut p = PathBuf::from(root);
     if !rel.is_empty() {
@@ -141,7 +141,7 @@ pub fn read_nbt(root: &str, rel: &str) -> Result<crate::nbt::NbtNode> {
     let p = resolve(root, rel)?;
     let size = std::fs::metadata(&p)?.len();
     if size > 64 * 1024 * 1024 {
-        return Err(anyhow!("file too large to parse"));
+        return Err(anyhow!("This file is too large to read."));
     }
     crate::nbt::parse(&std::fs::read(&p)?)
 }

@@ -148,7 +148,7 @@ pub fn delete_instance(game_dir: &Path) -> Result<()> {
     let root = launchers::mmc_root(game_dir)
         .ok_or_else(|| anyhow!("Only Prism Launcher and MultiMC instances can be deleted here."))?;
     if running(game_dir).is_some() {
-        bail!("Minecraft is running in this instance. Stop it first.");
+        bail!("Minecraft is running in this instance. Close it first.");
     }
     std::fs::remove_dir_all(&root)?;
     Ok(())
@@ -163,7 +163,7 @@ pub fn copy_instance(game_dir: &Path, name: &str) -> Result<DetectedInstance> {
         .ok_or_else(|| anyhow!("Only Prism Launcher and MultiMC instances can be copied."))?;
     let instances = root
         .parent()
-        .ok_or_else(|| anyhow!("can't find the instances folder"))?;
+        .ok_or_else(|| anyhow!("Couldn't find the instances folder."))?;
     let base = folder_name(name);
     let mut target = instances.join(&base);
     let mut n = 2;
