@@ -136,4 +136,3 @@ export const SIDE_OPTIONS = [
 	{ value: 'client', label: 'Client only' },
 	{ value: 'server', label: 'Server only' },
 ]
-
