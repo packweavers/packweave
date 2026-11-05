@@ -175,7 +175,7 @@ pub fn registry<'a>(mr: &'a Modrinth, cf: &'a CurseForge) -> Vec<&'a dyn Provide
 }
 
 fn not_content(name: &str) -> anyhow::Error {
-    anyhow!("“{name}” isn't a mod, resource pack, shader or data pack.")
+    anyhow!("“{name}” isn't a mod, resource pack, shader, or data pack.")
 }
 
 pub fn by_id<'a>(id: ProviderId, mr: &'a Modrinth, cf: &'a CurseForge) -> Option<&'a dyn Provider> {
@@ -441,7 +441,7 @@ impl Provider for CurseForge {
         let m = if reference.chars().all(|c| c.is_ascii_digit()) {
             let nid: u32 = reference
                 .parse()
-                .map_err(|_| anyhow!("Invalid CurseForge id."))?;
+                .map_err(|_| anyhow!("Invalid CurseForge ID."))?;
             CurseForge::get_mod(self, nid).await?
         } else {
             CurseForge::find_by_slug(self, reference)
@@ -520,8 +520,8 @@ impl Provider for CurseForge {
             sha1: r.sha1,
             sha512: None,
             file_size: r.file_size,
-            client_side: None,
-            server_side: None,
+            client_side: r.client_side,
+            server_side: r.server_side,
             deps,
             actual_type,
         })

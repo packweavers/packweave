@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -7,12 +8,13 @@ use std::time::Duration;
 use tokio::sync::Semaphore;
 
 use crate::cache::Cache;
-
-const API: &str = "https://api.modrinth.com";
 use crate::USER_AGENT;
 use ts_rs::TS;
+
+const API: &str = "https://api.modrinth.com";
 const MAX_CONCURRENT: usize = 8;
 const FETCH_RETRIES: usize = 4;
+const BULK_LIMIT: usize = 100;
 
 const TTL_LIST: u64 = 3_600;
 const TTL_META: u64 = 86_400;
@@ -24,6 +26,7 @@ type VersionCache = HashMap<String, (u64, Vec<Version>)>;
 #[derive(Clone)]
 pub struct Modrinth {
     client: reqwest::Client,
+    downloader: reqwest::Client,
     version_cache: Arc<Mutex<VersionCache>>,
     version_by_id: Arc<Mutex<HashMap<String, Version>>>,
     semaphore: Arc<Semaphore>,
@@ -93,6 +96,8 @@ pub struct Project {
     pub team: String,
     #[serde(default)]
     pub organization: Option<String>,
+    #[serde(default)]
+    pub downloads: u64,
 }
 
 impl Project {
@@ -235,8 +240,14 @@ impl Modrinth {
             .user_agent(USER_AGENT)
             .timeout(Duration::from_secs(30))
             .build()?;
+        let downloader = reqwest::Client::builder()
+            .user_agent(USER_AGENT)
+            .connect_timeout(Duration::from_secs(30))
+            .read_timeout(Duration::from_secs(30))
+            .build()?;
         Ok(Self {
             client,
+            downloader,
             version_cache: Arc::new(Mutex::new(HashMap::new())),
             version_by_id: Arc::new(Mutex::new(HashMap::new())),
             semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT)),
@@ -248,34 +259,42 @@ impl Modrinth {
         self.cache.set_dir(dir);
     }
 
-    async fn execute(&self, builder: reqwest::RequestBuilder) -> Result<reqwest::Response> {
+    async fn send(&self, builder: reqwest::RequestBuilder) -> reqwest::Result<reqwest::Response> {
         let _permit = self.semaphore.clone().acquire_owned().await.ok();
         let mut attempt = 0usize;
         loop {
-            let attempt_builder = builder
-                .try_clone()
-                .ok_or_else(|| anyhow!("request cannot be retried"))?;
-            let resp = attempt_builder.send().await?;
+            let Some(next) = builder.try_clone() else {
+                return builder.send().await;
+            };
+            let resp = next.send().await?;
             let status = resp.status();
-            if status.is_success() {
+            let retryable = status.as_u16() == 429 || status.is_server_error();
+            if !retryable || attempt >= FETCH_RETRIES {
                 return Ok(resp);
             }
-            let retryable = status.as_u16() == 429 || status.is_server_error();
-            if retryable && attempt < FETCH_RETRIES {
-                attempt += 1;
-                let reset = resp
-                    .headers()
-                    .get("x-ratelimit-reset")
-                    .and_then(|v| v.to_str().ok())
-                    .and_then(|s| s.parse::<u64>().ok());
-                let wait = reset.unwrap_or((attempt as u64) * 2).clamp(1, 60);
-                tokio::time::sleep(Duration::from_secs(wait)).await;
-                continue;
-            }
-            let text = resp.text().await.unwrap_or_default();
-            let snippet: String = text.chars().take(300).collect();
-            return Err(anyhow!("Modrinth API error {status}: {snippet}"));
+            attempt += 1;
+            let reset = resp
+                .headers()
+                .get("x-ratelimit-reset")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.parse::<u64>().ok());
+            let wait = reset.unwrap_or((attempt as u64) * 2).clamp(1, 60);
+            tokio::time::sleep(Duration::from_secs(wait)).await;
         }
+    }
+
+    async fn execute(&self, builder: reqwest::RequestBuilder) -> Result<reqwest::Response> {
+        let resp = self.send(builder).await?;
+        let status = resp.status();
+        if status.is_success() {
+            return Ok(resp);
+        }
+        let text = resp.text().await.unwrap_or_default();
+        let detail = serde_json::from_str::<serde_json::Value>(&text)
+            .ok()
+            .and_then(|v| v.get("description")?.as_str().map(str::to_string))
+            .unwrap_or_else(|| text.chars().take(300).collect());
+        Err(anyhow!("Modrinth returned {status}: {detail}"))
     }
 
     pub async fn search(
@@ -416,40 +435,32 @@ impl Modrinth {
         Ok(map)
     }
 
-    pub async fn projects_bulk(&self, ids: &[String]) -> Result<Vec<Project>> {
-        if ids.is_empty() {
-            return Ok(vec![]);
+    async fn bulk<T: DeserializeOwned>(&self, path: &str, ids: &[String]) -> Result<Vec<T>> {
+        let mut out = Vec::new();
+        for chunk in ids.chunks(BULK_LIMIT) {
+            let ids_json = serde_json::to_string(chunk)?;
+            let resp = self
+                .execute(
+                    self.client
+                        .get(format!("{API}{path}"))
+                        .query(&[("ids", ids_json.as_str())]),
+                )
+                .await?;
+            out.extend(resp.json::<Vec<T>>().await?);
         }
-        let ids_json = serde_json::to_string(ids)?;
-        let url = format!("{API}/v2/projects");
-        let resp = self
-            .execute(self.client.get(&url).query(&[("ids", ids_json.as_str())]))
-            .await?;
-        Ok(resp.json().await?)
+        Ok(out)
+    }
+
+    pub async fn projects_bulk(&self, ids: &[String]) -> Result<Vec<Project>> {
+        self.bulk("/v2/projects", ids).await
     }
 
     async fn teams_bulk(&self, ids: &[String]) -> Result<Vec<Vec<TeamMember>>> {
-        if ids.is_empty() {
-            return Ok(vec![]);
-        }
-        let ids_json = serde_json::to_string(ids)?;
-        let url = format!("{API}/v2/teams");
-        let resp = self
-            .execute(self.client.get(&url).query(&[("ids", ids_json.as_str())]))
-            .await?;
-        Ok(resp.json().await?)
+        self.bulk("/v2/teams", ids).await
     }
 
     async fn orgs_bulk(&self, ids: &[String]) -> Result<Vec<Organization>> {
-        if ids.is_empty() {
-            return Ok(vec![]);
-        }
-        let ids_json = serde_json::to_string(ids)?;
-        let url = format!("{API}/v3/organizations");
-        let resp = self
-            .execute(self.client.get(&url).query(&[("ids", ids_json.as_str())]))
-            .await?;
-        Ok(resp.json().await?)
+        self.bulk("/v3/organizations", ids).await
     }
 
     pub async fn enrich(&self, ids: &[String]) -> Result<Vec<ModMeta>> {
@@ -618,8 +629,11 @@ impl Modrinth {
     }
 
     pub async fn download(&self, url: &str) -> Result<Vec<u8>> {
-        let resp = self.execute(self.client.get(url)).await?;
-        Ok(resp.bytes().await?.to_vec())
+        let failed = |e: reqwest::Error| anyhow!("{}", crate::util::failure(&e));
+        let resp = self.send(self.downloader.get(url)).await.map_err(failed)?;
+        let resp = resp.error_for_status().map_err(failed)?;
+        let bytes = resp.bytes().await.map_err(failed)?;
+        Ok(bytes.to_vec())
     }
 
     pub fn clear_version_cache(&self) -> std::io::Result<()> {

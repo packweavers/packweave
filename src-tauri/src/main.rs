@@ -72,6 +72,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         let root = base.join("packweave");
         let cache = root.join("cache");
         let _ = std::fs::create_dir_all(&cache);
+        app.state::<CurseForge>().set_cache_dir(cache.clone());
         app.state::<Modrinth>().set_cache_dir(cache);
         lockfile::set_cache_dir(root.join("lockcache"));
         syncbase::set_dir(root.join("syncbase"));

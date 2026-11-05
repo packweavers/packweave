@@ -76,6 +76,7 @@ class ContentState {
 	history = $state<UndoState>({ undo: null, redo: null })
 	#rechecking = false
 	#lastRecheck = 0
+	#checkRun = 0
 
 	get mods(): LockedMod[] {
 		return this.lockfile?.mods ?? []
@@ -238,7 +239,15 @@ class ContentState {
 			const resolved = await tasks.run(force ? 'Resolving again' : 'Resolving', () =>
 				resolvePack(dir, force),
 			)
-			if (ws.dir === dir) this.apply(resolved)
+			if (ws.dir !== dir) return
+			this.apply(resolved)
+			if (force) {
+				this.meta = {}
+				void this.enrichMissing()
+				void this.refreshChanges()
+				void this.refreshUnpublished()
+				void this.checkUpdates()
+			}
 		} catch (error) {
 			if (!quiet) toasts.error(error)
 		} finally {
@@ -286,16 +295,17 @@ class ContentState {
 
 	async checkUpdates(loud = false): Promise<void> {
 		const dir = ws.dir
-		if (!dir || this.checking) return
+		if (!dir || (this.checking && !loud)) return
+		const run = ++this.#checkRun
 		this.checking = true
 		try {
-			const found = await tasks.run('Checking for updates', () => checkUpdates(dir))
-			if (ws.dir !== dir) return
+			const found = await tasks.run('Checking for updates', () => checkUpdates(dir, loud))
+			if (ws.dir !== dir || run !== this.#checkRun) return
 			this.updates = Object.fromEntries(found.map((u) => [u.key, u]))
 		} catch (error) {
-			if (loud) toasts.error(error)
+			if (loud && run === this.#checkRun) toasts.error(error)
 		} finally {
-			this.checking = false
+			if (run === this.#checkRun) this.checking = false
 		}
 	}
 

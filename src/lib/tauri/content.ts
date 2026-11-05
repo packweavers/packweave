@@ -100,8 +100,8 @@ export function previewChange(dir: string, change: ChangePreview): Promise<Impac
 	return call('preview_change', { path: dir, change })
 }
 
-export function checkUpdates(dir: string): Promise<AvailableUpdate[]> {
-	return call('check_updates', { path: dir })
+export function checkUpdates(dir: string, fresh = false): Promise<AvailableUpdate[]> {
+	return call('check_updates', { path: dir, fresh })
 }
 
 export function listUnpublished(dir: string): Promise<LocalContent[]> {

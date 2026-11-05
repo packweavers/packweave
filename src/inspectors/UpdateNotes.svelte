@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { ChevronDown, ChevronRight } from '@lucide/svelte'
 
+	import { tasks } from '@/lib/state/tasks.svelte'
 	import { ws } from '@/lib/state/workspace.svelte'
 	import { updateChangelogs } from '@/lib/tauri/catalog'
 	import type { VersionNotes } from '@/lib/tauri/types'
@@ -12,9 +13,15 @@
 		projectId: string
 		version: string
 		expandAll?: boolean
+		empty?: string
 	}
 
-	let { projectId, version, expandAll = false }: Props = $props()
+	let {
+		projectId,
+		version,
+		expandAll = false,
+		empty = 'No changelog for this update',
+	}: Props = $props()
 
 	let notes = $state<VersionNotes[] | null>(null)
 	let failed = $state(false)
@@ -32,10 +39,11 @@
 			.then((list) => {
 				if (live) notes = list
 			})
-			.catch(() => {
+			.catch((error) => {
 				if (!live) return
 				notes = []
 				failed = true
+				tasks.fail('Loading the changelog', error)
 			})
 		return () => {
 			live = false
@@ -51,7 +59,7 @@
 	<div class="loading"><span class="spinner"></span></div>
 {:else if notes.length === 0}
 	<p class="small hint">
-		{failed ? "Couldn't load the changelog." : 'No changelog for this update.'}
+		{failed ? "Couldn't load the changelog." : empty}
 	</p>
 {:else}
 	<div class="notes">
@@ -75,7 +83,7 @@
 						{#if note.changelog.trim()}
 							<Markdown source={note.changelog} html={note.html} />
 						{:else}
-							<p class="small hint">No changelog for this version.</p>
+							<p class="small hint">No changelog for this version</p>
 						{/if}
 					</div>
 				{/if}

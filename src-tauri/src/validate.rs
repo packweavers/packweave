@@ -191,6 +191,7 @@ pub(crate) fn reason(detail: &str, provider: ProviderId) -> (String, bool) {
     let has = |keys: &[&str]| keys.iter().any(|k| text.contains(k));
     if has(&[
         "error sending request",
+        "error decoding response body",
         "dns error",
         "timed out",
         "connection refused",
@@ -199,7 +200,7 @@ pub(crate) fn reason(detail: &str, provider: ProviderId) -> (String, bool) {
         (format!("Couldn't reach {host}"), true)
     } else if has(&["429"]) {
         (format!("{host} is limiting requests"), true)
-    } else if has(&["server error", "error 5"]) {
+    } else if has(&["server error", "error 5", "returned 5"]) {
         (format!("{host} is having trouble"), true)
     } else if has(&["404", "not found"]) {
         (format!("Not found on {host}"), false)
@@ -213,7 +214,7 @@ fn some_names(names: &[String]) -> String {
     if names.len() <= 3 {
         return join_names(names);
     }
-    format!("{} and {} more", names[..3].join(", "), names.len() - 3)
+    format!("{}, and {} more", names[..3].join(", "), names.len() - 3)
 }
 
 pub fn build(

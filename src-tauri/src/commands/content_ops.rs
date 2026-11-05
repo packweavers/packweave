@@ -596,6 +596,7 @@ pub async fn resolve_pack(
 ) -> Result<PackResolved, String> {
     if force {
         mr.clear_version_cache()
+            .and_then(|_| cf.clear_listings())
             .map_err(|e| format!("Couldn't clear cached versions: {e}"))?;
     }
     do_resolve(&mr, &cf, &PathBuf::from(path)).await.map_err(es)
@@ -725,7 +726,13 @@ pub async fn check_updates(
     mr: State<'_, Modrinth>,
     cf: State<'_, CurseForge>,
     path: String,
+    fresh: bool,
 ) -> Result<Vec<AvailableUpdate>, String> {
+    if fresh {
+        mr.clear_version_cache()
+            .and_then(|_| cf.clear_listings())
+            .map_err(|e| format!("Couldn't clear cached versions: {e}"))?;
+    }
     let dir = PathBuf::from(&path);
     let manifest = manifest::read(&dir).map_err(es)?;
     let lock = lockfile::read(&dir).map_err(es)?;

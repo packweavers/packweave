@@ -89,7 +89,7 @@ pub async fn search(
     limit: u32,
 ) -> Result<Vec<CatalogHit>, String> {
     let p = providers::by_id(provider, &mr, &cf)
-        .ok_or_else(|| format!("Unknown provider '{provider}'."))?;
+        .ok_or_else(|| format!("{} isn't a platform.", provider.label()))?;
     if !p.configured() {
         return Err(format!("{} isn't set up yet.", p.display_name()));
     }
@@ -283,7 +283,7 @@ pub async fn convert_search(
     let item = content::read_all(&dir)
         .into_iter()
         .find(|i| content::matches(i, &project_id))
-        .ok_or_else(|| "Mod not found.".to_string())?;
+        .ok_or_else(|| "That isn't in the pack.".to_string())?;
     let manifest = manifest::read(&dir).map_err(es)?;
     let item_slug = item.active().map(|s| s.slug.clone()).unwrap_or_default();
     let query = if !item.name.is_empty() {
@@ -293,7 +293,7 @@ pub async fn convert_search(
     };
 
     let provider = providers::by_id(target, &mr, &cf)
-        .ok_or_else(|| format!("Unknown provider “{target}”."))?;
+        .ok_or_else(|| format!("{} isn't a platform.", target.label()))?;
     if let Some(cand) = match_by_file(&mr, &cf, &dir, &item, target).await {
         return Ok(Some(
             finish_candidate(
@@ -364,15 +364,15 @@ pub async fn convert_lookup(
     let item = content::read_all(&dir)
         .into_iter()
         .find(|i| content::matches(i, &project_id))
-        .ok_or_else(|| "Mod not found.".to_string())?;
+        .ok_or_else(|| "That isn't in the pack.".to_string())?;
     let manifest = manifest::read(&dir).map_err(es)?;
     let r = parse_ref(&query);
     if r.is_empty() {
-        return Err("Enter a link, slug, or id.".into());
+        return Err("Enter a link, slug, or ID.".into());
     }
 
     let provider = providers::by_id(target, &mr, &cf)
-        .ok_or_else(|| format!("Unknown provider “{target}”."))?;
+        .ok_or_else(|| format!("{} isn't a platform.", target.label()))?;
     let proj = provider.lookup(&r).await.map_err(es)?;
 
     Ok(finish_candidate(
@@ -427,7 +427,7 @@ pub async fn mod_versions(
     loader: Option<String>,
 ) -> Result<Vec<VersionInfo>, String> {
     let p = providers::by_id(provider, &mr, &cf)
-        .ok_or_else(|| format!("Unknown provider '{provider}'."))?;
+        .ok_or_else(|| format!("{} isn't a platform.", provider.label()))?;
     p.versions(&project_id, &minecraft, loader.as_deref())
         .await
         .map_err(es)
@@ -476,7 +476,7 @@ pub async fn project_details(
         ProviderId::Curseforge => {
             let id: u32 = project_id
                 .parse()
-                .map_err(|_| "Not a CurseForge project id.".to_string())?;
+                .map_err(|_| format!("“{project_id}” isn't a CurseForge project ID."))?;
             let m = cf.get_mod(id).await.map_err(es)?;
             let section = match crate::curseforge::type_from_class(m.class_id) {
                 ProjectType::Resourcepack => "texture-packs",
@@ -507,9 +507,28 @@ pub async fn project_details(
                 icon_url: p.icon_url,
                 client_side: Some(p.client_side),
                 server_side: Some(p.server_side),
-                downloads: 0,
+                downloads: p.downloads,
             })
         }
+    }
+}
+
+async fn changelog_of(
+    mr: &Modrinth,
+    cf: &CurseForge,
+    provider: ProviderId,
+    project_id: &str,
+    version_id: &str,
+) -> anyhow::Result<String> {
+    match provider {
+        ProviderId::Curseforge => {
+            let (Ok(mod_id), Ok(file_id)) = (project_id.parse::<u32>(), version_id.parse::<u32>())
+            else {
+                return Ok(String::new());
+            };
+            cf.file_changelog(mod_id, file_id).await
+        }
+        _ => mr.version_changelog(version_id).await,
     }
 }
 
@@ -521,16 +540,9 @@ pub async fn version_changelog(
     project_id: String,
     version_id: String,
 ) -> Result<String, String> {
-    match provider {
-        ProviderId::Curseforge => {
-            let (Ok(mod_id), Ok(file_id)) = (project_id.parse::<u32>(), version_id.parse::<u32>())
-            else {
-                return Ok(String::new());
-            };
-            cf.file_changelog(mod_id, file_id).await.map_err(es)
-        }
-        _ => mr.version_changelog(&version_id).await.map_err(es),
-    }
+    changelog_of(&mr, &cf, provider, &project_id, &version_id)
+        .await
+        .map_err(es)
 }
 
 #[derive(Serialize, TS)]
@@ -571,7 +583,20 @@ pub async fn update_changelogs(
         .await
         .map_err(es)?;
     let Some(target) = versions.iter().find(|v| v.id == to_version) else {
-        return Ok(Vec::new());
+        if to_version != item.version_id() {
+            return Ok(Vec::new());
+        }
+        let changelog = changelog_of(&mr, &cf, item.preferred, &project_id, &to_version)
+            .await
+            .map_err(es)?;
+        return Ok(vec![VersionNotes {
+            version_id: to_version.clone(),
+            version_number: item.version_number().to_string(),
+            version_type: "release".into(),
+            date_published: String::new(),
+            changelog,
+            html: item.preferred == ProviderId::Curseforge,
+        }]);
     };
     let limit = manifest
         .channel

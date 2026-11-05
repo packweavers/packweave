@@ -115,7 +115,7 @@
 			{#if changelog}
 				<Markdown source={changelog} html={provider === 'curseforge'} />
 			{:else}
-				<span class="small">No changelog</span>
+				<span class="small hint">No changelog for this version</span>
 			{/if}
 		</section>
 	</div>

@@ -1,12 +1,21 @@
-use crate::ptype::ProjectType;
 use anyhow::{anyhow, bail, Result};
-use serde::Deserialize;
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::Semaphore;
 
+use crate::cache::Cache;
 use crate::modrinth::{ModMeta, VersionInfo};
+use crate::ptype::ProjectType;
 
 const API_BASE: &str = "https://api.curseforge.com";
 const GAME_ID: u32 = 432;
+const MAX_CONCURRENT: usize = 8;
+const TTL_LIST: u64 = 3_600;
+const TTL_META: u64 = 86_400;
 pub const API_KEY: &str = match option_env!("CURSEFORGE_API_KEY") {
     Some(key) => key,
     None => "",
@@ -14,6 +23,8 @@ pub const API_KEY: &str = match option_env!("CURSEFORGE_API_KEY") {
 
 pub struct CurseForge {
     client: reqwest::Client,
+    semaphore: Arc<Semaphore>,
+    cache: Arc<Cache>,
 }
 
 #[derive(Deserialize)]
@@ -44,7 +55,7 @@ struct FingerprintMatch {
     file: CfFile,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct CfMod {
     pub id: u32,
@@ -77,19 +88,19 @@ pub fn type_from_class(id: Option<u32>) -> ProjectType {
     content_type(id).unwrap_or_default()
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct CfLogo {
     #[serde(default)]
     pub url: String,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct CfAuthor {
     #[serde(default)]
     pub name: String,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct CfFile {
     pub id: u32,
@@ -110,9 +121,11 @@ pub struct CfFile {
     pub file_fingerprint: u64,
     #[serde(default)]
     pub dependencies: Vec<CfDep>,
+    #[serde(default)]
+    pub game_versions: Vec<String>,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct CfDep {
     pub mod_id: u32,
@@ -120,7 +133,7 @@ pub struct CfDep {
     pub relation_type: u32,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct CfHash {
     pub value: String,
@@ -137,14 +150,42 @@ pub struct CfResolved {
     pub name: String,
     pub slug: String,
     pub deps: Vec<CfDep>,
+    pub client_side: Option<String>,
+    pub server_side: Option<String>,
+}
+
+fn sides_of(file: &CfFile) -> (Option<String>, Option<String>) {
+    let tagged = |name: &str| {
+        file.game_versions
+            .iter()
+            .any(|v| v.eq_ignore_ascii_case(name))
+    };
+    match (tagged("Client"), tagged("Server")) {
+        (true, false) => (Some("required".into()), Some("unsupported".into())),
+        (false, true) => (Some("unsupported".into()), Some("required".into())),
+        _ => (None, None),
+    }
 }
 
 impl CurseForge {
     pub fn new() -> Result<Self> {
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
+            .user_agent(crate::USER_AGENT)
+            .timeout(Duration::from_secs(30))
             .build()?;
-        Ok(Self { client })
+        Ok(Self {
+            client,
+            semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT)),
+            cache: Arc::new(Cache::new()),
+        })
+    }
+
+    pub fn set_cache_dir(&self, dir: PathBuf) {
+        self.cache.set_dir(dir);
+    }
+
+    pub fn clear_listings(&self) -> std::io::Result<()> {
+        self.cache.clear("cf-files")
     }
 
     pub fn configured() -> bool {
@@ -158,19 +199,22 @@ impl CurseForge {
         Ok(())
     }
 
-    async fn get_json<T: for<'de> Deserialize<'de>>(&self, url: &str) -> Result<T> {
+    async fn send_json<T: DeserializeOwned>(&self, request: reqwest::RequestBuilder) -> Result<T> {
         self.ensure()?;
-        let resp = self
-            .client
-            .get(url)
+        let _permit = self.semaphore.clone().acquire_owned().await.ok();
+        let resp = request
             .header("x-api-key", API_KEY)
             .header("Accept", "application/json")
             .send()
             .await?;
         if !resp.status().is_success() {
-            bail!("CurseForge request failed ({})", resp.status());
+            bail!("CurseForge returned {}.", resp.status());
         }
         Ok(resp.json::<T>().await?)
+    }
+
+    async fn get_json<T: DeserializeOwned>(&self, url: &str) -> Result<T> {
+        self.send_json(self.client.get(url)).await
     }
 
     pub async fn search(
@@ -200,12 +244,42 @@ impl CurseForge {
     }
 
     pub async fn get_mod(&self, id: u32) -> Result<CfMod> {
+        let key = id.to_string();
+        if let Some(m) = self.cache.get::<CfMod>("cf-mod", &key, TTL_META) {
+            return Ok(m);
+        }
         let url = format!("{API_BASE}/v1/mods/{id}");
         let resp: OneResp<CfMod> = self.get_json(&url).await?;
+        self.cache.put("cf-mod", &key, &resp.data);
         Ok(resp.data)
     }
 
+    pub async fn get_mods(&self, ids: &[u32]) -> Result<Vec<CfMod>> {
+        let mut out: Vec<CfMod> = Vec::new();
+        let mut missing: Vec<u32> = Vec::new();
+        for id in ids {
+            match self.cache.get::<CfMod>("cf-mod", &id.to_string(), TTL_META) {
+                Some(m) => out.push(m),
+                None => missing.push(*id),
+            }
+        }
+        for chunk in missing.chunks(100) {
+            let body = serde_json::json!({ "modIds": chunk, "filterPcOnly": true });
+            let url = format!("{API_BASE}/v1/mods");
+            let resp: ListResp<CfMod> = self.send_json(self.client.post(&url).json(&body)).await?;
+            for m in resp.data {
+                self.cache.put("cf-mod", &m.id.to_string(), &m);
+                out.push(m);
+            }
+        }
+        Ok(out)
+    }
+
     pub async fn mod_files(&self, id: u32, mc: &str, loader: &str) -> Result<Vec<CfFile>> {
+        let key = format!("{id}|{mc}|{loader}");
+        if let Some(files) = self.cache.get::<Vec<CfFile>>("cf-files", &key, TTL_LIST) {
+            return Ok(files);
+        }
         let loader_t = loader_type(loader);
         let mut url = format!("{API_BASE}/v1/mods/{id}/files?pageSize=50");
         if !mc.is_empty() {
@@ -215,12 +289,22 @@ impl CurseForge {
             url.push_str(&format!("&modLoaderType={loader_t}"));
         }
         let resp: ListResp<CfFile> = self.get_json(&url).await?;
+        self.cache.put("cf-files", &key, &resp.data);
         Ok(resp.data)
     }
 
     pub async fn get_file(&self, mod_id: u32, file_id: u32) -> Result<CfFile> {
+        let key = format!("{mod_id}/{file_id}");
+        if let Some(file) = self
+            .cache
+            .get::<CfFile>("cf-file", &key, 0)
+            .filter(|f| !f.game_versions.is_empty())
+        {
+            return Ok(file);
+        }
         let url = format!("{API_BASE}/v1/mods/{mod_id}/files/{file_id}");
         let resp: OneResp<CfFile> = self.get_json(&url).await?;
+        self.cache.put("cf-file", &key, &resp.data);
         Ok(resp.data)
     }
 
@@ -240,12 +324,12 @@ impl CurseForge {
     ) -> Result<CfResolved> {
         let id: u32 = mod_id
             .parse()
-            .map_err(|_| anyhow!("Invalid CurseForge id '{mod_id}'"))?;
+            .map_err(|_| anyhow!("“{mod_id}” isn't a CurseForge project ID."))?;
         let file = match version {
             Some(fid) if !fid.is_empty() => {
                 let f: u32 = fid
                     .parse()
-                    .map_err(|_| anyhow!("Invalid CurseForge file id '{fid}'"))?;
+                    .map_err(|_| anyhow!("“{fid}” isn't a CurseForge file ID."))?;
                 self.get_file(id, f).await?
             }
             _ => {
@@ -257,8 +341,9 @@ impl CurseForge {
             .download_url
             .clone()
             .filter(|u| !u.is_empty())
-            .ok_or_else(|| anyhow!("Only downloadable through CurseForge"))?;
+            .ok_or_else(|| anyhow!("The author only allows downloads through CurseForge."))?;
         let info = self.get_mod(id).await.ok();
+        let (client_side, server_side) = sides_of(&file);
         Ok(CfResolved {
             file_id: file.id,
             version: file_version(&file),
@@ -277,6 +362,8 @@ impl CurseForge {
                 .unwrap_or_else(|| file.display_name.clone()),
             slug: info.map(|m| m.slug).unwrap_or_default(),
             deps: file.dependencies.clone(),
+            client_side,
+            server_side,
         })
     }
 
@@ -284,10 +371,12 @@ impl CurseForge {
         if !Self::configured() {
             return Ok(Vec::new());
         }
-        let futs = ids.iter().map(|id| async move {
-            let nid: u32 = id.parse().ok()?;
-            let m = self.get_mod(nid).await.ok()?;
-            Some(ModMeta {
+        let ids: Vec<u32> = ids.iter().filter_map(|id| id.parse().ok()).collect();
+        Ok(self
+            .get_mods(&ids)
+            .await?
+            .into_iter()
+            .map(|m| ModMeta {
                 project_id: m.id.to_string(),
                 icon_url: m.logo.map(|l| l.url).filter(|u| !u.is_empty()),
                 author: m
@@ -297,15 +386,13 @@ impl CurseForge {
                     .unwrap_or_default(),
                 author_icon_url: None,
             })
-        });
-        let results = futures::future::join_all(futs).await;
-        Ok(results.into_iter().flatten().collect())
+            .collect())
     }
 
     pub async fn versions(&self, id: &str, mc: &str, loader: &str) -> Result<Vec<VersionInfo>> {
         let nid: u32 = id
             .parse()
-            .map_err(|_| anyhow!("Invalid CurseForge id '{id}'"))?;
+            .map_err(|_| anyhow!("“{id}” isn't a CurseForge project ID."))?;
         let mut files = self.mod_files(nid, mc, loader).await?;
         files.sort_by(|a, b| b.file_date.cmp(&a.file_date));
         Ok(files
@@ -324,15 +411,12 @@ impl CurseForge {
         if !Self::configured() {
             return HashMap::new();
         }
-        let futs = ids.iter().map(|id| async move {
-            let nid: u32 = id.parse().ok()?;
-            let m = self.get_mod(nid).await.ok()?;
-            Some((m.id.to_string(), (m.name, m.slug)))
-        });
-        futures::future::join_all(futs)
+        let ids: Vec<u32> = ids.iter().filter_map(|id| id.parse().ok()).collect();
+        self.get_mods(&ids)
             .await
+            .unwrap_or_default()
             .into_iter()
-            .flatten()
+            .map(|m| (m.id.to_string(), (m.name, m.slug)))
             .collect()
     }
 
@@ -357,18 +441,7 @@ impl CurseForge {
         }
         let url = format!("{API_BASE}/v1/fingerprints/{GAME_ID}");
         let body = serde_json::json!({ "fingerprints": hashes });
-        let resp = self
-            .client
-            .post(&url)
-            .header("x-api-key", API_KEY)
-            .header("Accept", "application/json")
-            .json(&body)
-            .send()
-            .await?;
-        if !resp.status().is_success() {
-            bail!("CurseForge fingerprint request failed ({})", resp.status());
-        }
-        let parsed: FingerprintResp = resp.json().await?;
+        let parsed: FingerprintResp = self.send_json(self.client.post(&url).json(&body)).await?;
         let mut out: HashMap<u64, (u32, CfFile)> = HashMap::new();
         for m in parsed.data.exact_matches {
             out.insert(m.file.file_fingerprint, (m.id, m.file));
