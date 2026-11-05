@@ -51,6 +51,10 @@ export function deleteToken(host: string | null): Promise<void> {
 	return call('git_token_delete', { host })
 }
 
+export function signedIn(host: string): Promise<boolean> {
+	return call('git_signed_in', { host })
+}
+
 export function commit(
 	dir: string,
 	message: string,
@@ -77,8 +81,12 @@ export function push(dir: string, force = false, tags = false): Promise<string> 
 	return call('git_push', { path: dir, force, tags })
 }
 
-export function pull(dir: string, strategy: string): Promise<string> {
+export function pull(dir: string, strategy: string): Promise<boolean> {
 	return call('git_pull', { path: dir, strategy })
+}
+
+export function incoming(dir: string): Promise<number> {
+	return call('git_incoming', { path: dir })
 }
 
 export function fetch(dir: string): Promise<string> {
@@ -246,10 +254,6 @@ export function createTag(
 
 export function deleteTag(dir: string, name: string): Promise<void> {
 	return call('git_delete_tag', { path: dir, name })
-}
-
-export function pushTag(dir: string, name: string): Promise<string> {
-	return call('git_push_tag', { path: dir, name })
 }
 
 export function upstreamHead(dir: string): Promise<string | null> {

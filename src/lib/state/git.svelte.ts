@@ -173,38 +173,38 @@ class GitState {
 		await this.refreshRefs()
 	}
 
-	async #network(
+	async #network<T>(
 		kind: 'push' | 'pull' | 'fetch',
 		label: string,
-		work: () => Promise<unknown>,
-	): Promise<void> {
+		work: () => Promise<T>,
+	): Promise<T> {
 		this.busy = kind
 		try {
-			await tasks.run(label, work)
+			return await tasks.run(label, work)
 		} finally {
 			this.busy = null
 			await this.refreshAll()
 		}
 	}
 
-	push(): Promise<void> {
+	async push(): Promise<void> {
 		const dir = ws.dir
-		if (!dir) return Promise.resolve()
-		return this.#network('push', `Pushing to ${this.remoteName ?? 'origin'}`, () => api.push(dir))
+		if (!dir) return
+		await this.#network('push', `Pushing to ${this.remoteName ?? 'origin'}`, () => api.push(dir))
 	}
 
-	pull(): Promise<void> {
+	pull(): Promise<boolean> {
 		const dir = ws.dir
-		if (!dir) return Promise.resolve()
+		if (!dir) return Promise.resolve(false)
 		return this.#network('pull', `Pulling from ${this.remoteName ?? 'origin'}`, () =>
 			api.pull(dir, app.prefs.pullStrategy),
 		)
 	}
 
-	fetch(): Promise<void> {
+	async fetch(): Promise<void> {
 		const dir = ws.dir
-		if (!dir) return Promise.resolve()
-		return this.#network('fetch', `Fetching ${this.remoteName ?? 'origin'}`, () => api.fetch(dir))
+		if (!dir) return
+		await this.#network('fetch', `Fetching ${this.remoteName ?? 'origin'}`, () => api.fetch(dir))
 	}
 
 	async discard(paths: string[]): Promise<void> {

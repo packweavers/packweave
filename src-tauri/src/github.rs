@@ -3,6 +3,9 @@ use serde::Serialize;
 use serde_json::json;
 use ts_rs::TS;
 
+pub const SIGN_IN_FIRST: &str =
+    "Sign in to GitHub first: use Git once, or add a token in Settings › Accounts.";
+
 pub struct Release {
     pub html_url: String,
     pub id: u64,
@@ -184,40 +187,50 @@ pub async fn upload_asset(
 
 pub async fn create_release(
     repo: &str,
-    token: &str,
+    tokens: &[String],
     tag: &str,
     name: &str,
     body: &str,
     prerelease: bool,
     target: Option<&str>,
-) -> Result<Release> {
+) -> Result<(Release, String)> {
     let client = reqwest::Client::builder()
         .user_agent(crate::USER_AGENT)
         .build()?;
     let url = format!("https://api.github.com/repos/{repo}/releases");
-    let resp = client
-        .post(&url)
-        .header("Authorization", format!("Bearer {token}"))
-        .header("Accept", "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", "2022-11-28")
-        .json(&{
-            let mut payload = json!({
-                "tag_name": tag,
-                "name": name,
-                "body": body,
-                "draft": false,
-                "prerelease": prerelease,
-            });
-            if let Some(target) = target {
-                payload["target_commitish"] = json!(target);
-            }
-            payload
-        })
-        .send()
-        .await?;
-    let status = resp.status();
-    let value: serde_json::Value = resp.json().await.unwrap_or_default();
-    if !status.is_success() {
+    let mut payload = json!({
+        "tag_name": tag,
+        "name": name,
+        "body": body,
+        "draft": false,
+        "prerelease": prerelease,
+    });
+    if let Some(target) = target {
+        payload["target_commitish"] = json!(target);
+    }
+    let mut failure = None;
+    for token in tokens {
+        let resp = client
+            .post(&url)
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .json(&payload)
+            .send()
+            .await?;
+        let status = resp.status();
+        let value: serde_json::Value = resp.json().await.unwrap_or_default();
+        if status.is_success() {
+            let release = Release {
+                html_url: value
+                    .get("html_url")
+                    .and_then(|u| u.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                id: value.get("id").and_then(|i| i.as_u64()).unwrap_or(0),
+            };
+            return Ok((release, token.clone()));
+        }
         let exists = value
             .get("errors")
             .and_then(|e| e.as_array())
@@ -229,23 +242,23 @@ pub async fn create_release(
         if exists {
             return Err(anyhow!("{repo} already has a release for {tag}."));
         }
-        if status == reqwest::StatusCode::NOT_FOUND {
-            return Err(anyhow!(
-                "Couldn't find {repo}, or your GitHub sign-in can't create releases there."
-            ));
+        let error = match status {
+            reqwest::StatusCode::UNAUTHORIZED => anyhow!("GitHub rejected your sign-in."),
+            reqwest::StatusCode::NOT_FOUND => {
+                anyhow!("Couldn't find {repo}, or your GitHub sign-in can't create releases there.")
+            }
+            _ => anyhow!(
+                "{}",
+                value
+                    .get("message")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("release request failed")
+            ),
+        };
+        if !matches!(status.as_u16(), 401 | 403 | 404) {
+            return Err(error);
         }
-        let msg = value
-            .get("message")
-            .and_then(|m| m.as_str())
-            .unwrap_or("release request failed");
-        return Err(anyhow!("{msg}"));
+        failure = Some(error);
     }
-    Ok(Release {
-        html_url: value
-            .get("html_url")
-            .and_then(|u| u.as_str())
-            .unwrap_or_default()
-            .to_string(),
-        id: value.get("id").and_then(|i| i.as_u64()).unwrap_or(0),
-    })
+    Err(failure.unwrap_or_else(|| anyhow!(SIGN_IN_FIRST)))
 }

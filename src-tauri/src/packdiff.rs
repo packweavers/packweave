@@ -129,24 +129,22 @@ fn snapshot_at(dir: &Path, reference: &str) -> Result<Snapshot> {
     let manifest: Manifest =
         serde_json::from_str(&git::show_file(dir, reference, "modpack.json")?)?;
     let mut items = BTreeMap::new();
-    for path in git::list_tree(dir, reference, "content") {
-        if !path.ends_with(".json") {
-            continue;
-        }
-        let text = match git::show_file(dir, reference, &path) {
-            Ok(t) => t,
-            Err(_) => continue,
+    let blobs: Vec<(String, String)> = git::tree_blobs(dir, reference, "content")
+        .into_iter()
+        .filter(|(path, _)| path.ends_with(".json"))
+        .collect();
+    let oids: Vec<String> = blobs.iter().map(|(_, oid)| oid.clone()).collect();
+    git::each_blob(dir, &oids, |i, bytes| {
+        let path = &blobs[i].0;
+        let Ok(mut item) = serde_json::from_slice::<ContentItem>(bytes) else {
+            return;
         };
-        let mut item: ContentItem = match serde_json::from_str(&text) {
-            Ok(i) => i,
-            Err(_) => continue,
-        };
-        item.project_type = ProjectType::from_content_path(&path);
-        let slug = slug_from_path(&path);
+        item.project_type = ProjectType::from_content_path(path);
+        let slug = slug_from_path(path);
         item.file = slug.clone();
         let key = format!("{}/{}", item.project_type, slug);
         items.insert(key, snap_item(&item, &slug));
-    }
+    })?;
     Ok(Snapshot {
         minecraft: manifest.minecraft,
         loader: manifest.loader,

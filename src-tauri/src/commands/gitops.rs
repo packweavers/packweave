@@ -53,30 +53,39 @@ pub async fn git_setup_state() -> Result<GitSetup, String> {
     blocking(|| Ok(gitsetup::state())).await
 }
 
+fn token_host(host: Option<String>) -> String {
+    host.map(|h| h.trim().to_lowercase())
+        .filter(|h| !h.is_empty())
+        .unwrap_or_else(|| "github.com".into())
+}
+
 #[tauri::command]
 pub async fn git_token_save(token: String, host: Option<String>) -> Result<Option<String>, String> {
     let token = token.trim().to_string();
     if token.is_empty() {
         return Err("Paste a token first".into());
     }
-    let account = github::verify_token(host.as_deref(), &token)
+    let host = token_host(host);
+    let account = github::verify_token(Some(&host), &token)
         .await
         .map_err(es)?;
-    let key = match host.as_deref() {
-        Some(h) if !h.is_empty() => git::token_key(h),
-        _ => "git_token".to_string(),
-    };
-    secrets::set(&key, &token).map_err(es)?;
+    secrets::set(&git::token_key(&host), &token).map_err(es)?;
     Ok(account)
 }
 
 #[tauri::command]
 pub async fn git_token_delete(host: Option<String>) -> Result<(), String> {
-    let key = match host.as_deref() {
-        Some(h) if !h.is_empty() => git::token_key(h),
-        _ => "git_token".to_string(),
-    };
-    secrets::delete(&key).map_err(es)
+    let host = token_host(host);
+    secrets::delete(&git::token_key(&host)).map_err(es)?;
+    if host == "github.com" {
+        secrets::delete("git_token").map_err(es)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn git_signed_in(host: String) -> Result<bool, String> {
+    blocking(move || Ok(git::credential_token(None, &host.trim().to_lowercase()).is_some())).await
 }
 
 #[tauri::command]
@@ -141,8 +150,13 @@ pub async fn git_push(path: String, force: bool, tags: bool) -> Result<String, S
 }
 
 #[tauri::command]
-pub async fn git_pull(path: String, strategy: String) -> Result<String, String> {
+pub async fn git_pull(path: String, strategy: String) -> Result<bool, String> {
     rewriting(path, move |dir| git::pull(dir, &strategy)).await
+}
+
+#[tauri::command]
+pub async fn git_incoming(path: String) -> Result<u32, String> {
+    blocking(move || Ok(git::incoming(&dir_of(&path)))).await
 }
 
 #[tauri::command]
@@ -514,11 +528,6 @@ pub async fn git_delete_tag(path: String, name: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn git_push_tag(path: String, name: String) -> Result<String, String> {
-    blocking(move || git::push_tag(&dir_of(&path), &name)).await
-}
-
-#[tauri::command]
 pub async fn git_pack_url(path: String) -> Result<Option<String>, String> {
     blocking(move || Ok(git::pack_remote_url(&dir_of(&path)))).await
 }
@@ -631,10 +640,13 @@ pub async fn github_release(path: String, release: GithubRelease) -> Result<Stri
             release.repo
         ));
     }
-    let (_, token) = super::github_identity(&dir).await;
-    let token = token.ok_or_else(|| {
-        "Sign in to GitHub first: use Git once, or add a token in Settings › Accounts.".to_string()
-    })?;
+    let tokens = {
+        let dir = dir.clone();
+        blocking(move || Ok(git::github_tokens(&dir))).await?
+    };
+    if tokens.is_empty() {
+        return Err(github::SIGN_IN_FIRST.into());
+    }
     let mut bundles: Vec<(String, Vec<u8>)> = Vec::new();
     if release.updates {
         let dist = super::saved_dist_token(&dir);
@@ -651,9 +663,9 @@ pub async fn github_release(path: String, release: GithubRelease) -> Result<Stri
             }
         }
     }
-    let rel = github::create_release(
+    let (rel, token) = github::create_release(
         &release.repo,
-        &token,
+        &tokens,
         &release.tag,
         &release.name,
         &release.body,

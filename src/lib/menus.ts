@@ -15,6 +15,7 @@ import type {
 	ItemChange,
 	LocalContent,
 	LockedMod,
+	Remote,
 	SyncIgnored,
 	Tag,
 } from '@/lib/tauri/types'
@@ -43,14 +44,17 @@ import {
 import { deleteFile, ignoreKindOf, openInFiles, resetIgnoreFile } from './flows/files'
 import {
 	addRemote,
+	changeRemoteUrl,
 	cherryPick,
 	createTag,
 	deleteTag,
 	discard,
 	discardContent,
 	fetch,
+	keepSide,
 	pull,
 	push,
+	removeRemote,
 	resetTo,
 	revertCommit,
 } from './flows/git'
@@ -131,6 +135,41 @@ export function remoteMenu(): MenuEntry[] {
 	]
 }
 
+export function remoteRowMenu(remote: Remote): MenuEntry[] {
+	const web = remoteWebUrl(remote.url)
+	return [
+		...(remote.name === git.remoteName ? [...remoteMenu(), 'separator' as const] : []),
+		{ label: 'Copy URL', run: () => copy(remote.url, 'URL') },
+		...(web ? [{ label: 'Open in browser', run: () => void openExternal(web) }] : []),
+		'separator',
+		{ label: 'Change URL…', run: () => void changeRemoteUrl(remote.name) },
+		{ label: 'Add a remote…', run: () => void addRemote() },
+		'separator',
+		{ label: 'Remove…', danger: true, run: () => void removeRemote(remote.name) },
+	]
+}
+
+export function conflictMenu(path: string): MenuEntry[] {
+	const into = git.branch ?? 'this branch'
+	const from = git.merge?.note?.from ?? 'the other branch'
+	return [
+		{ label: 'Open', run: () => tabs.open('conflicts') },
+		'separator',
+		{ label: `Keep ${into}`, run: () => void keepSide(path, 'ours') },
+		{ label: `Keep ${from}`, run: () => void keepSide(path, 'theirs') },
+		'separator',
+		{ label: 'Copy path', run: () => copy(path, 'path') },
+		{ label: `Show in ${fileManager}`, run: () => revealInPack(path) },
+	]
+}
+
+function remoteWebUrl(url: string): string | null {
+	const trimmed = url.trim().replace(/\.git$/, '')
+	if (/^https?:\/\//i.test(trimmed)) return trimmed.replace(/\/\/[^@/]+@/, '//')
+	const ssh = /^(?:ssh:\/\/)?[^@/]+@([^:/]+)[:/](.+)$/.exec(trimmed)
+	return ssh ? `https://${ssh[1]}/${ssh[2]}` : null
+}
+
 export function instanceMenu(): MenuEntry[] {
 	if (!instance.bound) return [{ label: 'Link an instance…', run: () => void linkInstance() }]
 	return [
@@ -188,6 +227,8 @@ export function tabMenu(doc: Doc): MenuEntry[] {
 export function tagMenu(tag: Tag): MenuEntry[] {
 	return [
 		{ label: 'Show in history', run: () => tabs.open('history', tag.commit) },
+		{ label: 'New branch here…', run: () => void newBranch(tag.name) },
+		'separator',
 		{ label: 'Copy name', run: () => copy(tag.name, 'name') },
 		'separator',
 		{ label: 'Delete tag…', danger: true, run: () => void deleteTag(tag.name) },
@@ -535,7 +576,7 @@ export function branchMenu(name: string): MenuEntry[] {
 	]
 }
 
-export function commitMenu(hash: string): MenuEntry[] {
+export function commitMenu(hash: string, subject: string | null = null): MenuEntry[] {
 	return [
 		{ label: 'New branch here…', run: () => void newBranch(hash) },
 		{ label: 'Tag here…', run: () => void createTag(hash) },
@@ -543,6 +584,8 @@ export function commitMenu(hash: string): MenuEntry[] {
 		{ label: 'Revert this commit', run: () => void revertCommit(hash) },
 		'separator',
 		{ label: 'Copy hash', run: () => copy(hash, 'hash') },
+		...(subject ? [{ label: 'Copy message', run: () => copy(subject, 'message') }] : []),
+		'separator',
 		{ label: `Reset ${git.branch} to here…`, danger: true, run: () => void resetTo(hash) },
 	]
 }

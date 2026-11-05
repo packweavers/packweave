@@ -1,6 +1,7 @@
 use anyhow::{anyhow, bail, Result};
 use serde::Serialize;
 use std::collections::HashSet;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -100,7 +101,10 @@ pub struct Tag {
 pub const MISSING: &str = "GIT_MISSING:Git isn't installed.";
 pub const NO_IDENTITY: &str = "GIT_IDENTITY:Set the name and email for your commits.";
 
-static GIT_BIN: std::sync::RwLock<Option<Option<PathBuf>>> = std::sync::RwLock::new(None);
+const MISSING_RECHECK: std::time::Duration = std::time::Duration::from_secs(5);
+
+static GIT_BIN: std::sync::RwLock<Option<(Option<PathBuf>, std::time::Instant)>> =
+    std::sync::RwLock::new(None);
 
 fn quiet(cmd: &mut Command) -> &mut Command {
     #[cfg(target_os = "windows")]
@@ -158,10 +162,18 @@ fn extra_locations() -> Vec<PathBuf> {
         }
     }
 
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(home) = std::env::var_os("USERPROFILE") {
+            v.push(PathBuf::from(home).join("scoop/shims/git.exe"));
+        }
+    }
+
     #[cfg(target_os = "macos")]
     {
         v.push(PathBuf::from("/opt/homebrew/bin/git"));
         v.push(PathBuf::from("/usr/local/bin/git"));
+        v.push(PathBuf::from("/opt/local/bin/git"));
     }
 
     #[cfg(target_os = "linux")]
@@ -169,6 +181,15 @@ fn extra_locations() -> Vec<PathBuf> {
         v.push(PathBuf::from("/usr/bin/git"));
         v.push(PathBuf::from("/usr/local/bin/git"));
         v.push(PathBuf::from("/var/lib/flatpak/exports/bin/git"));
+    }
+
+    #[cfg(unix)]
+    {
+        if let Some(home) = std::env::var_os("HOME") {
+            v.push(PathBuf::from(home).join(".nix-profile/bin/git"));
+        }
+        v.push(PathBuf::from("/run/current-system/sw/bin/git"));
+        v.push(PathBuf::from("/nix/var/nix/profiles/default/bin/git"));
     }
     v
 }
@@ -201,12 +222,16 @@ fn detect() -> Option<PathBuf> {
 }
 
 pub fn binary() -> Option<PathBuf> {
-    if let Some(cached) = GIT_BIN.read().ok().and_then(|g| g.clone()) {
-        return cached;
+    if let Some((cached, at)) = GIT_BIN.read().ok().and_then(|g| g.clone()) {
+        if cached.as_ref().is_some_and(|p| p.is_file())
+            || (cached.is_none() && at.elapsed() < MISSING_RECHECK)
+        {
+            return cached;
+        }
     }
     let found = detect();
     if let Ok(mut slot) = GIT_BIN.write() {
-        *slot = Some(found.clone());
+        *slot = Some((found.clone(), std::time::Instant::now()));
     }
     found
 }
@@ -256,7 +281,7 @@ pub fn set_identity(name: &str, email: &str) -> Result<()> {
     let name = name.trim();
     let email = email.trim();
     if name.is_empty() || email.is_empty() {
-        bail!("Enter a name and an email");
+        bail!("Enter a name and an email.");
     }
     if let Some(err) = git_missing() {
         return Err(err);
@@ -265,10 +290,10 @@ pub fn set_identity(name: &str, email: &str) -> Result<()> {
         let out = new_git()
             .args(["config", "--global", key, value])
             .output()
-            .map_err(|e| anyhow!("couldn't save your git settings: {e}"))?;
+            .map_err(|e| anyhow!("Couldn't save your Git settings: {e}"))?;
         if !out.status.success() {
             bail!(
-                "couldn't save your git settings: {}",
+                "Couldn't save your Git settings: {}",
                 String::from_utf8_lossy(&out.stderr).trim()
             );
         }
@@ -295,7 +320,7 @@ fn git(dir: &Path, args: &[&str]) -> Result<String> {
         .current_dir(dir)
         .args(args)
         .output()
-        .map_err(|e| anyhow!("git is not installed or not on PATH: {e}"))?;
+        .map_err(|e| anyhow!("Couldn't run Git: {e}"))?;
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     } else {
@@ -321,8 +346,15 @@ pub fn token_key(host: &str) -> String {
 }
 
 pub fn token_for(host: &str) -> Option<String> {
-    secrets::get(&token_key(host))
-        .or_else(|| secrets::get("git_token"))
+    let host = host.to_lowercase();
+    secrets::get(&token_key(&host))
+        .or_else(|| {
+            if host == "github.com" {
+                secrets::get("git_token")
+            } else {
+                None
+            }
+        })
         .filter(|t| !t.trim().is_empty())
 }
 
@@ -334,43 +366,85 @@ fn https_host(url: &str) -> Option<String> {
     parse_remote(url).map(|(host, _)| host.to_lowercase())
 }
 
-fn auth_hosts(dir: Option<&Path>, url: Option<&str>) -> Vec<String> {
-    let mut hosts: Vec<String> = Vec::new();
-    if let Some(u) = url.and_then(https_host) {
-        hosts.push(u);
+fn ssh_prefix(url: &str) -> Option<(String, String)> {
+    let url = url.trim();
+    if let Some(rest) = url.strip_prefix("ssh://") {
+        let (authority, _) = rest.split_once('/')?;
+        let host = authority.rsplit('@').next()?;
+        if host.contains(':') {
+            return None;
+        }
+        return Some((host.to_lowercase(), format!("ssh://{authority}/")));
     }
+    if url.contains("://") {
+        return None;
+    }
+    let (user_host, _) = url.split_once(':')?;
+    let host = user_host.rsplit('@').next()?;
+    (user_host.contains('@') && !host.is_empty() && !host.contains('/'))
+        .then(|| (host.to_lowercase(), format!("{user_host}:")))
+}
+
+fn remote_urls(dir: Option<&Path>, url: Option<&str>) -> Vec<String> {
+    let mut urls: Vec<String> = url.map(|u| u.trim().to_string()).into_iter().collect();
     if let Some(d) = dir {
         for name in remote_names(d) {
             let remote = git(d, &["remote", "get-url", &name]).unwrap_or_default();
-            if let Some(h) = https_host(remote.trim()) {
-                hosts.push(h);
+            if !remote.trim().is_empty() {
+                urls.push(remote.trim().to_string());
             }
         }
     }
-    hosts.sort();
-    hosts.dedup();
+    urls
+}
+
+fn auth_hosts(
+    dir: Option<&Path>,
+    url: Option<&str>,
+) -> std::collections::BTreeMap<String, Vec<String>> {
+    let mut hosts: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    for remote in remote_urls(dir, url) {
+        if let Some(host) = https_host(&remote) {
+            hosts.entry(host).or_default();
+        } else if let Some((host, prefix)) = ssh_prefix(&remote) {
+            let prefixes = hosts.entry(host).or_default();
+            if !prefixes.contains(&prefix) {
+                prefixes.push(prefix);
+            }
+        }
+    }
     hosts
 }
 
 fn auth_user(host: &str) -> &'static str {
-    if host.eq_ignore_ascii_case("github.com") {
-        "x-access-token"
-    } else {
-        "oauth2"
+    match host.to_lowercase().as_str() {
+        "github.com" => "x-access-token",
+        "bitbucket.org" => "x-token-auth",
+        _ => "oauth2",
     }
 }
 
-fn net_command(dir: Option<&Path>, url: Option<&str>) -> Command {
+fn net_command(dir: Option<&Path>, url: Option<&str>, tokens: bool) -> (Command, bool) {
     use base64::Engine;
     let mut cmd = new_git();
     if let Some(d) = dir {
         cmd.current_dir(d);
     }
     let mut authed = false;
-    for host in auth_hosts(dir, url) {
+    let hosts = if tokens {
+        auth_hosts(dir, url)
+    } else {
+        std::collections::BTreeMap::new()
+    };
+    for (host, ssh) in hosts {
         let Some(token) = token_for(&host) else {
             continue;
         };
+        for prefix in ssh {
+            cmd.arg("-c")
+                .arg(format!("url.https://{host}/.insteadOf={prefix}"));
+        }
         let auth = base64::engine::general_purpose::STANDARD.encode(format!(
             "{}:{}",
             auth_user(&host),
@@ -386,62 +460,167 @@ fn net_command(dir: Option<&Path>, url: Option<&str>) -> Command {
         cmd.env("GCM_INTERACTIVE", "never");
     }
     cmd.env("GIT_TERMINAL_PROMPT", "0");
-    cmd
+    (cmd, authed)
+}
+
+fn run_net(dir: Option<&Path>, url: Option<&str>, args: &[&OsStr], label: &str) -> Result<String> {
+    if let Some(err) = git_missing() {
+        return Err(err);
+    }
+    let run = |tokens: bool| {
+        let (mut cmd, authed) = net_command(dir, url, tokens);
+        cmd.args(args)
+            .output()
+            .map(|output| (output, authed))
+            .map_err(|e| anyhow!("Couldn't run Git: {e}"))
+    };
+    let (mut output, authed) = run(true)?;
+    if !output.status.success()
+        && authed
+        && auth_failure(&String::from_utf8_lossy(&output.stderr).to_lowercase())
+    {
+        output = run(false)?.0;
+    }
+    if output.status.success() {
+        return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if authed && auth_failure(&stderr.to_lowercase()) {
+        if let Some(problem) = token_problem(dir, url) {
+            return Err(anyhow!("GIT_AUTH:{problem}"));
+        }
+    }
+    Err(net_error(label, &stderr))
+}
+
+fn origin_url(dir: &Path) -> Option<String> {
+    let names = remote_names(dir);
+    let name = names
+        .iter()
+        .find(|n| *n == "origin")
+        .or_else(|| names.first())?;
+    git(dir, &["remote", "get-url", name])
+        .ok()
+        .map(|u| u.trim().to_string())
+        .filter(|u| !u.is_empty())
+}
+
+fn token_problem(dir: Option<&Path>, url: Option<&str>) -> Option<String> {
+    let remote = url
+        .map(str::to_string)
+        .or_else(|| dir.and_then(origin_url))?;
+    let (host, path) = parse_remote(&remote)?;
+    let host = host.to_lowercase();
+    let token = token_for(&host)?;
+    if host != "github.com" {
+        return Some(format!("{host} rejected the saved token."));
+    }
+    let repo = path
+        .trim_end_matches('/')
+        .trim_end_matches(".git")
+        .to_string();
+    let response = reqwest::blocking::Client::builder()
+        .user_agent(crate::USER_AGENT)
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .ok()?
+        .get(format!("https://api.github.com/repos/{repo}"))
+        .bearer_auth(token.trim())
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .ok()?;
+    let status = response.status().as_u16();
+    let message = response
+        .json::<serde_json::Value>()
+        .ok()
+        .and_then(|v| {
+            v.get("message")
+                .and_then(|m| m.as_str())
+                .map(str::to_string)
+        })
+        .filter(|m| !m.is_empty() && m != "Not Found");
+    match (status, message) {
+        (401, _) => Some(format!("{host} rejected the saved token.")),
+        (403, Some(message)) => Some(format!(
+            "The saved {host} token can't access {repo}: {message}"
+        )),
+        (403 | 404, _) => Some(format!("The saved {host} token can't access {repo}.")),
+        _ => None,
+    }
+}
+
+fn remote_message(stderr: &str) -> Option<String> {
+    let lines: Vec<&str> = stderr
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix("remote:"))
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    (!lines.is_empty()).then(|| lines.join(" "))
 }
 
 fn git_net(dir: &Path, args: &[&str]) -> Result<String> {
-    if let Some(err) = git_missing() {
-        return Err(err);
-    }
-    let mut cmd = net_command(Some(dir), None);
-    cmd.args(args);
-    let output = cmd
-        .output()
-        .map_err(|e| anyhow!("git is not installed or not on PATH: {e}"))?;
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-    } else {
-        Err(net_error(
-            args,
-            String::from_utf8_lossy(&output.stderr).trim(),
-        ))
-    }
+    let os: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
+    run_net(Some(dir), None, &os, &args.join(" "))
 }
 
-fn net_error(args: &[&str], stderr: &str) -> anyhow::Error {
-    let low = stderr.to_lowercase();
-    let auth = low.contains("authentication failed")
+fn ssh_failure(low: &str) -> bool {
+    low.contains("could not read from remote repository")
+}
+
+fn auth_failure(low: &str) -> bool {
+    if ssh_failure(low) {
+        return false;
+    }
+    low.contains("authentication failed")
         || low.contains("could not read username")
+        || low.contains("could not read password")
         || low.contains("terminal prompts disabled")
         || low.contains("invalid username or password")
-        || low.contains("permission denied")
-        || low.contains("not found")
+        || low.contains("invalid username or token")
+        || (low.contains("repository") && low.contains("not found"))
+        || (low.contains("permission to") && low.contains("denied"))
         || low.contains("error: 401")
         || low.contains("error: 403")
-        || low.contains("error: 404");
-    if auth {
-        return anyhow!("GIT_AUTH:Authentication required for this repository.");
+        || low.contains("error: 404")
+}
+
+fn ssh_host(stderr: &str) -> Option<String> {
+    let line = stderr
+        .lines()
+        .find(|l| l.to_lowercase().contains("permission denied (publickey"))?;
+    let target = line.split(": ").next()?.trim();
+    let host = target.rsplit('@').next()?.trim();
+    (!host.is_empty() && !host.contains(' ')).then(|| host.to_string())
+}
+
+fn net_error(label: &str, stderr: &str) -> anyhow::Error {
+    let low = stderr.to_lowercase();
+    if ssh_failure(&low) && low.contains("permission denied (publickey") {
+        return match ssh_host(stderr) {
+            Some(host) => anyhow!("{host} rejected your SSH key."),
+            None => anyhow!("The remote rejected your SSH key."),
+        };
     }
-    anyhow!("git {}: {}", args.join(" "), stderr)
+    if auth_failure(&low) {
+        return match remote_message(stderr) {
+            Some(remote) => {
+                anyhow!("GIT_AUTH:Authentication required for this repository: {remote}")
+            }
+            None => anyhow!("GIT_AUTH:Authentication required for this repository."),
+        };
+    }
+    anyhow!("git {label}: {stderr}")
 }
 
 pub fn clone(url: &str, dest: &Path) -> Result<()> {
-    if let Some(err) = git_missing() {
-        return Err(err);
-    }
-    let mut cmd = net_command(None, Some(url));
-    cmd.arg("clone").arg(url).arg(dest);
-    let output = cmd
-        .output()
-        .map_err(|e| anyhow!("git is not installed or not on PATH: {e}"))?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(net_error(
-            &["clone"],
-            String::from_utf8_lossy(&output.stderr).trim(),
-        ))
-    }
+    run_net(
+        None,
+        Some(url),
+        &[OsStr::new("clone"), OsStr::new(url), dest.as_os_str()],
+        "clone",
+    )
+    .map(|_| ())
 }
 
 pub fn is_repo(dir: &Path) -> bool {
@@ -461,7 +640,7 @@ fn git_input(dir: &Path, args: &[&str], input: Vec<u8>) -> Result<Vec<u8>> {
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
-        .map_err(|e| anyhow!("git is not installed or not on PATH: {e}"))?;
+        .map_err(|e| anyhow!("Couldn't run Git: {e}"))?;
     let mut stdin = child
         .stdin
         .take()
@@ -516,7 +695,7 @@ pub fn each_blob(dir: &Path, oids: &[String], mut visit: impl FnMut(usize, &[u8]
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .spawn()
-        .map_err(|e| anyhow!("git is not installed or not on PATH: {e}"))?;
+        .map_err(|e| anyhow!("Couldn't run Git: {e}"))?;
     let mut stdin = child
         .stdin
         .take()
@@ -959,7 +1138,7 @@ pub fn create_branch(
 ) -> Result<()> {
     let name = name.trim();
     if name.is_empty() {
-        bail!("Enter a branch name");
+        bail!("Enter a branch name.");
     }
     let mut args = vec![if checkout_it { "checkout" } else { "branch" }];
     if checkout_it {
@@ -976,7 +1155,7 @@ pub fn create_branch(
 pub fn rename_branch(dir: &Path, old: &str, new: &str) -> Result<()> {
     let new = new.trim();
     if new.is_empty() {
-        bail!("Enter a branch name");
+        bail!("Enter a branch name.");
     }
     git(dir, &["branch", "-m", old, new])?;
     Ok(())
@@ -990,7 +1169,7 @@ pub fn delete_branch(dir: &Path, name: &str, force: bool) -> Result<()> {
 pub fn delete_remote_branch(dir: &Path, name: &str) -> Result<String> {
     let (remote, branch) = name
         .split_once('/')
-        .ok_or_else(|| anyhow!("Not a remote branch: {name}"))?;
+        .ok_or_else(|| anyhow!("{name} isn't a remote branch."))?;
     git_net(dir, &["push", remote, "--delete", branch])
 }
 
@@ -1000,10 +1179,10 @@ pub fn rebase_branch(dir: &Path, name: &str) -> Result<String> {
 
 pub fn commit(dir: &Path, message: &str, files: &[String], amend: bool) -> Result<()> {
     if message.trim().is_empty() {
-        bail!("Enter a commit message");
+        bail!("Enter a commit message.");
     }
     if !amend && files.is_empty() {
-        bail!("Select at least one change to commit");
+        bail!("Select at least one change to commit.");
     }
     if let Some(err) = git_missing() {
         return Err(err);
@@ -1029,7 +1208,17 @@ pub fn commit(dir: &Path, message: &str, files: &[String], amend: bool) -> Resul
             &["rm", "-r", "--cached", "--ignore-unmatch", "-q", "--", "."],
         )?;
     }
-    if !files.is_empty() {
+    if files.iter().map(|f| f.len() + 1).sum::<usize>() > 8_000 {
+        let list: Vec<u8> = files
+            .iter()
+            .flat_map(|f| f.bytes().chain(std::iter::once(0)))
+            .collect();
+        git_input(
+            dir,
+            &["add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul"],
+            list,
+        )?;
+    } else if !files.is_empty() {
         let mut add = vec!["add", "-A", "--"];
         for f in files {
             add.push(f.as_str());
@@ -1061,13 +1250,137 @@ pub fn fetch(dir: &Path) -> Result<String> {
     Ok(out)
 }
 
-pub fn pull(dir: &Path, strategy: &str) -> Result<String> {
-    let flag = match strategy {
-        "rebase" => "--rebase",
-        "merge" => "--no-rebase",
-        _ => "--ff-only",
+pub fn pull(dir: &Path, strategy: &str) -> Result<bool> {
+    let upstream = git(
+        dir,
+        &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    )
+    .ok()
+    .map(|s| s.trim().to_string())
+    .filter(|s| !s.is_empty());
+    let Some(upstream) = upstream.filter(|_| has_head(dir)) else {
+        git_net(dir, &["pull", "--ff-only"])?;
+        return Ok(false);
     };
-    git_net(dir, &["pull", flag])
+    git_net(dir, &["fetch"])?;
+    if rev_count(dir, "HEAD..@{u}") == 0 {
+        return Ok(false);
+    }
+    let incoming = paths(dir, &["diff", "--name-only", "-z", "HEAD...@{u}", "--"]);
+    for path in paths(dir, &["diff", "--name-only", "-z", "HEAD", "--"]) {
+        if incoming.contains(&path) && holds(dir, &format!("@{{u}}:{path}"), &path) {
+            git(dir, &["checkout", "HEAD", "--", &path])?;
+        }
+    }
+    for path in paths(dir, &["ls-files", "--others", "--exclude-standard", "-z"]) {
+        if incoming.contains(&path) && holds(dir, &format!("@{{u}}:{path}"), &path) {
+            crate::util::delete_file(&dir.join(&path))?;
+        }
+    }
+    if strategy == "ff" || rev_count(dir, "@{u}..HEAD") == 0 {
+        git(dir, &["merge", "--ff-only", "@{u}"])?;
+        reset_index_json(dir);
+        return Ok(false);
+    }
+    if strategy == "merge" {
+        let conflicted = merge(dir, &upstream, "merge", "")?;
+        reset_index_json(dir);
+        return Ok(conflicted);
+    }
+    if !has_identity(dir) {
+        bail!(NO_IDENTITY);
+    }
+    let dirty = paths(dir, &["diff", "--name-only", "-z", "HEAD", "--"]);
+    if dirty.iter().any(|p| incoming.contains(p)) {
+        git(dir, &["rebase", "@{u}"])?;
+        return Ok(false);
+    }
+    let stashed = !dirty.is_empty();
+    if stashed {
+        git(dir, &["stash", "push", "-q"])?;
+    }
+    let rebased = rebase_onto(dir, rev_count(dir, "@{u}..HEAD"));
+    if stashed {
+        git(dir, &["stash", "pop", "-q"])?;
+    }
+    let conflicted = rebased? && merge(dir, &upstream, "merge", "")?;
+    reset_index_json(dir);
+    Ok(conflicted)
+}
+
+fn paths(dir: &Path, args: &[&str]) -> HashSet<String> {
+    let mut full = vec!["-c", "core.quotePath=false"];
+    full.extend_from_slice(args);
+    git(dir, &full)
+        .unwrap_or_default()
+        .split('\0')
+        .filter(|p| !p.is_empty() && *p != crate::content::INDEX_FILE)
+        .map(str::to_string)
+        .collect()
+}
+
+fn blob(dir: &Path, spec: &str) -> Option<String> {
+    git(dir, &["rev-parse", "-q", "--verify", spec])
+        .ok()
+        .map(|s| s.trim().to_string())
+}
+
+fn holds(dir: &Path, spec: &str, path: &str) -> bool {
+    match (dir.join(path).is_file(), blob(dir, spec)) {
+        (false, None) => true,
+        (true, Some(oid)) => {
+            git(dir, &["hash-object", "--", path]).is_ok_and(|out| out.trim() == oid)
+        }
+        _ => false,
+    }
+}
+
+fn rebasing(dir: &Path) -> bool {
+    ["rebase-merge", "rebase-apply"]
+        .iter()
+        .any(|name| git_path(dir, name).is_some_and(|p| p.exists()))
+}
+
+fn rebase_onto(dir: &Path, steps: u32) -> Result<bool> {
+    let mut result = git(dir, &["rebase", "@{u}"]);
+    for _ in 0..=steps {
+        if !rebasing(dir) {
+            return result.map(|_| false);
+        }
+        if !conflicted_files(dir).is_empty() {
+            git(dir, &["rebase", "--abort"])?;
+            return Ok(true);
+        }
+        crate::content::stage_index(dir)?;
+        let next = if git_ok(dir, &["diff", "--cached", "--quiet"]) {
+            "--skip"
+        } else {
+            "--continue"
+        };
+        result = git(dir, &["rebase", next]);
+    }
+    if rebasing(dir) {
+        git(dir, &["rebase", "--abort"])?;
+    }
+    result.map(|_| false)
+}
+
+pub fn incoming(dir: &Path) -> u32 {
+    if git_missing().is_some() || upstream_head(dir).is_none() {
+        return 0;
+    }
+    let (mut cmd, _) = net_command(Some(dir), None, true);
+    cmd.env("GCM_INTERACTIVE", "never")
+        .args(["fetch", "--quiet"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(cmd.status());
+    });
+    let _ = rx.recv_timeout(std::time::Duration::from_secs(5));
+    rev_count(dir, "HEAD..@{u}")
 }
 
 pub fn push(dir: &Path, force: bool, tags: bool) -> Result<String> {
@@ -1200,7 +1513,7 @@ pub fn show_file(dir: &Path, reference: &str, file: &str) -> Result<String> {
     git(dir, &["show", &format!("{reference}:{file}")])
 }
 
-pub fn list_tree(dir: &Path, reference: &str, subpath: &str) -> Vec<String> {
+pub fn tree_blobs(dir: &Path, reference: &str, subpath: &str) -> Vec<(String, String)> {
     git(
         dir,
         &[
@@ -1208,16 +1521,22 @@ pub fn list_tree(dir: &Path, reference: &str, subpath: &str) -> Vec<String> {
             "core.quotePath=false",
             "ls-tree",
             "-r",
-            "--name-only",
+            "-z",
             reference,
             "--",
             subpath,
         ],
     )
     .unwrap_or_default()
-    .lines()
-    .map(|l| l.trim().to_string())
-    .filter(|l| !l.is_empty())
+    .split('\0')
+    .filter_map(|record| {
+        let (meta, path) = record.split_once('\t')?;
+        let mut parts = meta.split(' ');
+        let _mode = parts.next()?;
+        let kind = parts.next()?;
+        let oid = parts.next()?;
+        (kind == "blob").then(|| (path.to_string(), oid.to_string()))
+    })
     .collect()
 }
 
@@ -1390,6 +1709,28 @@ pub fn stash_push(dir: &Path, message: &str, include_untracked: bool) -> Result<
 }
 
 pub fn stash_apply(dir: &Path, reference: &str, drop: bool) -> Result<String> {
+    let base = format!("{reference}^1");
+    for path in paths(dir, &["diff", "--name-only", "-z", &base, reference, "--"]) {
+        let current = blob(dir, &format!("HEAD:{path}"));
+        if !holds(dir, &format!("{reference}:{path}"), &path)
+            || current != blob(dir, &format!("{base}:{path}"))
+        {
+            continue;
+        }
+        if current.is_some() {
+            git(dir, &["checkout", "HEAD", "--", &path])?;
+        } else {
+            crate::util::delete_file(&dir.join(&path))?;
+        }
+    }
+    let untracked = format!("{reference}^3");
+    if blob(dir, &untracked).is_some() {
+        for path in paths(dir, &["ls-tree", "-r", "--name-only", "-z", &untracked]) {
+            if holds(dir, &format!("{untracked}:{path}"), &path) {
+                crate::util::delete_file(&dir.join(&path))?;
+            }
+        }
+    }
     git(
         dir,
         &["stash", if drop { "pop" } else { "apply" }, reference],
@@ -1401,13 +1742,15 @@ pub fn stash_drop(dir: &Path, reference: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn credential_token(dir: &Path) -> Option<String> {
-    if git_missing().is_some() {
+pub fn credential_token(dir: Option<&Path>, host: &str) -> Option<String> {
+    if git_missing().is_some() || host.is_empty() || host.chars().any(|c| c.is_whitespace()) {
         return None;
     }
     let mut cmd = new_git();
-    cmd.current_dir(dir)
-        .args(["credential", "fill"])
+    if let Some(d) = dir {
+        cmd.current_dir(d);
+    }
+    cmd.args(["credential", "fill"])
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GCM_INTERACTIVE", "never")
         .stdin(std::process::Stdio::piped())
@@ -1418,7 +1761,7 @@ pub fn credential_token(dir: &Path) -> Option<String> {
         use std::io::Write;
         let stdin = child.stdin.as_mut()?;
         stdin
-            .write_all(b"protocol=https\nhost=github.com\n\n")
+            .write_all(format!("protocol=https\nhost={host}\n\n").as_bytes())
             .ok()?;
     }
     let out = child.wait_with_output().ok()?;
@@ -1432,7 +1775,22 @@ pub fn credential_token(dir: &Path) -> Option<String> {
 }
 
 pub fn github_token(dir: &Path) -> Option<String> {
-    token_for("github.com").or_else(|| credential_token(dir))
+    token_for("github.com").or_else(|| credential_token(Some(dir), "github.com"))
+}
+
+pub fn github_tokens(dir: &Path) -> Vec<String> {
+    let mut tokens: Vec<String> = Vec::new();
+    let found = [
+        token_for("github.com"),
+        credential_token(Some(dir), "github.com"),
+    ];
+    for token in found.into_iter().flatten() {
+        let token = token.trim().to_string();
+        if !tokens.contains(&token) {
+            tokens.push(token);
+        }
+    }
+    tokens
 }
 
 pub fn latest_tag(dir: &Path) -> Option<String> {
@@ -1505,7 +1863,7 @@ pub fn create_tag(
 ) -> Result<()> {
     let name = name.trim();
     if name.is_empty() {
-        bail!("Enter a tag name");
+        bail!("Enter a tag name.");
     }
     let message = message.filter(|m| !m.trim().is_empty()).unwrap_or(name);
     let mut args = vec!["tag", "-a", name, "-m", message];
@@ -1519,20 +1877,6 @@ pub fn create_tag(
 pub fn delete_tag(dir: &Path, name: &str) -> Result<()> {
     git(dir, &["tag", "-d", name])?;
     Ok(())
-}
-
-pub fn push_tag(dir: &Path, name: &str) -> Result<String> {
-    let remotes = remote_names(dir);
-    let remote = remotes
-        .iter()
-        .find(|r| *r == "origin")
-        .or_else(|| remotes.first())
-        .ok_or_else(|| anyhow!("No remote to push to."))?;
-    if name.trim().is_empty() {
-        git_net(dir, &["push", remote, "--tags"])
-    } else {
-        git_net(dir, &["push", remote, "tag", name])
-    }
 }
 
 pub fn remotes(dir: &Path) -> Result<Vec<Remote>> {
@@ -1611,8 +1955,8 @@ fn parse_remote(remote: &str) -> Option<(String, String)> {
         return Some((host.to_string(), path.to_string()));
     }
     let after = remote.split("://").nth(1).unwrap_or(remote);
-    let after = after.trim_start_matches("git@");
-    let (host, path) = after.split_once('/')?;
+    let (authority, path) = after.split_once('/')?;
+    let host = authority.rsplit('@').next().unwrap_or(authority);
     Some((host.to_string(), path.to_string()))
 }
 
@@ -1854,10 +2198,14 @@ pub struct MergeNote {
     pub message: String,
 }
 
-fn merge_note_path(dir: &Path) -> Option<PathBuf> {
-    let out = git(dir, &["rev-parse", "--git-path", "packweave-merge.json"]).ok()?;
+fn git_path(dir: &Path, name: &str) -> Option<PathBuf> {
+    let out = git(dir, &["rev-parse", "--git-path", name]).ok()?;
     let p = PathBuf::from(out.trim());
     Some(if p.is_absolute() { p } else { dir.join(p) })
+}
+
+fn merge_note_path(dir: &Path) -> Option<PathBuf> {
+    git_path(dir, "packweave-merge.json")
 }
 
 pub fn conflicted_files(dir: &Path) -> Vec<String> {

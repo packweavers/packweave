@@ -6,13 +6,7 @@
 	import { buildTree, leaves, type TreeNode } from '@/lib/files/tree'
 	import { openInFiles } from '@/lib/flows/files'
 	import { discard, discardContent } from '@/lib/flows/git'
-	import {
-		changeMark,
-		changeWord,
-		displayPath,
-		folderPathOf,
-		isContentPath,
-	} from '@/lib/git/changes'
+	import { changeMark, changeWord, displayPath, folderPathOf, plainFiles } from '@/lib/git/changes'
 	import { contentChangeMenu, fileMenu } from '@/lib/menus'
 	import { content } from '@/lib/state/content.svelte'
 	import { git } from '@/lib/state/git.svelte'
@@ -40,9 +34,9 @@
 	let collapsed = $state<Record<string, boolean>>({})
 	let diffs = $state<Record<string, string>>({})
 
-	const fileChanges = $derived(git.changes.filter((c) => !isContentPath(c.path)))
-	const tree = $derived(buildTree(fileChanges, (c) => displayPath(c.path)))
 	const items = $derived(content.changes?.items ?? [])
+	const fileChanges = $derived(plainFiles(git.changes, items))
+	const tree = $derived(buildTree(fileChanges, (c) => displayPath(c.path)))
 
 	$effect(() => {
 		const target = git.focus

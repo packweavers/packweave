@@ -24,14 +24,15 @@
 		push,
 		stashChanges,
 	} from '@/lib/flows/git'
+	import { changeMark, changeWord, displayPath, folderPathOf, plainFiles } from '@/lib/git/changes'
 	import {
-		changeMark,
-		changeWord,
-		displayPath,
-		folderPathOf,
-		isContentPath,
-	} from '@/lib/git/changes'
-	import { branchMenu, contentChangeMenu, fileMenu, tagMenu } from '@/lib/menus'
+		branchMenu,
+		conflictMenu,
+		contentChangeMenu,
+		fileMenu,
+		remoteRowMenu,
+		tagMenu,
+	} from '@/lib/menus'
 	import { comboFor, keysFor } from '@/lib/state/commands.svelte'
 	import { content } from '@/lib/state/content.svelte'
 	import { git } from '@/lib/state/git.svelte'
@@ -60,8 +61,8 @@
 	})
 	let committing = $state(false)
 
-	const fileChanges = $derived(git.changes.filter((c) => !isContentPath(c.path)))
 	const contentChanges = $derived(content.changes?.items ?? [])
+	const fileChanges = $derived(plainFiles(git.changes, contentChanges))
 	const tree = $derived(buildTree(fileChanges, (c) => displayPath(c.path)))
 	const included = $derived(git.included)
 	const total = $derived(git.changes.filter((c) => !c.conflicted).length)
@@ -218,7 +219,12 @@
 			{#if git.conflicts.length > 0}
 				<SideSection title="Conflicts" count={git.conflicts.length}>
 					{#each git.conflicts as path (path)}
-						<SideItem label={displayPath(path)} mono onclick={() => tabs.open('conflicts')}>
+						<SideItem
+							label={displayPath(path)}
+							mono
+							onclick={() => tabs.open('conflicts')}
+							oncontextmenu={(e) => menus.at(e, conflictMenu(path))}
+						>
 							{#snippet trailing()}<span class="mark-text conflict">!</span>{/snippet}
 						</SideItem>
 					{/each}
@@ -295,7 +301,12 @@
 
 		<SideSection title="Remotes" count={git.remotes.length} bind:open={open.remotes}>
 			{#each git.remotes as remote (remote.name)}
-				<SideItem label={remote.name} mono>
+				<SideItem
+					label={remote.name}
+					mono
+					onclick={() => tabs.open('pack')}
+					oncontextmenu={(e) => menus.at(e, remoteRowMenu(remote))}
+				>
 					{#snippet trailing()}<span class="small ellipsis url"
 							>{remote.url.replace(/^https?:\/\/(www\.)?/, '').replace(/\.git$/, '')}</span
 						>{/snippet}

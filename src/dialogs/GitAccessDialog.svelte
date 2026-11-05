@@ -1,4 +1,8 @@
 <script lang="ts">
+	import { onMount } from 'svelte'
+
+	import { tasks } from '@/lib/state/tasks.svelte'
+	import { secretStatus } from '@/lib/tauri/app'
 	import { errorText } from '@/lib/tauri/call'
 	import { saveToken } from '@/lib/tauri/git'
 	import { openExternal } from '@/lib/tauri/windows'
@@ -7,17 +11,26 @@
 
 	interface Props {
 		host: string | null
+		reason?: string | null
 		close: (result?: boolean) => void
 	}
 
-	let { host, close }: Props = $props()
+	let { host, reason = null, close }: Props = $props()
 
 	let token = $state('')
 	let error = $state<string | null>(null)
 	let saving = $state(false)
+	let rejected = $state(false)
 
 	const site = $derived(host ?? 'github.com')
 	const forge = $derived(forgeOf(site))
+
+	onMount(() => {
+		const keys = [`git_token:${site}`, ...(site === 'github.com' ? ['git_token'] : [])]
+		void secretStatus(keys)
+			.then((found) => (rejected = found.some(Boolean)))
+			.catch(tasks.or('Checking the saved token', undefined))
+	})
 
 	function forgeOf(site: string): { name: string; url: string } {
 		const h = site.toLowerCase()
@@ -45,7 +58,7 @@
 		saving = true
 		error = null
 		try {
-			await saveToken(token.trim(), host)
+			await saveToken(token.trim(), site)
 			close(true)
 		} catch (e) {
 			error = errorText(e)
@@ -56,6 +69,11 @@
 </script>
 
 <Dialog title="{forge.name} access required" onclose={() => close()}>
+	{#if reason}
+		<p class="hint">{reason}</p>
+	{:else if rejected}
+		<p class="hint">{site} rejected the saved token.</p>
+	{/if}
 	<div class="form-field">
 		<span class="label">Token for {site}</span>
 		<TextField

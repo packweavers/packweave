@@ -2,20 +2,23 @@ import ConfirmDialog from '@/dialogs/ConfirmDialog.svelte'
 import GitAccessDialog from '@/dialogs/GitAccessDialog.svelte'
 import GitSetupDialog from '@/dialogs/GitSetupDialog.svelte'
 import PromptDialog from '@/dialogs/PromptDialog.svelte'
+import PullFirstDialog from '@/dialogs/PullFirstDialog.svelte'
 import { content } from '@/lib/state/content.svelte'
 import { dialogs } from '@/lib/state/dialogs.svelte'
 import { git } from '@/lib/state/git.svelte'
 import { panels } from '@/lib/state/panels.svelte'
+import { tabs } from '@/lib/state/tabs.svelte'
+import { tasks } from '@/lib/state/tasks.svelte'
 import { toasts } from '@/lib/state/toasts.svelte'
 import { ws } from '@/lib/state/workspace.svelte'
-import { errorCode } from '@/lib/tauri/call'
+import { errorCode, errorText } from '@/lib/tauri/call'
 import * as api from '@/lib/tauri/git'
 import type { ItemChange } from '@/lib/tauri/types'
 import { plural } from '@/lib/util/format'
 
 function remoteHost(): string | null {
 	const url = git.remotes.find((r) => r.name === git.remoteName)?.url ?? ''
-	const match = /^(?:https?:\/\/|git@)([^/:]+)/.exec(url)
+	const match = /^(?:[a-z][a-z0-9+.-]*:\/\/(?:[^@/]+@)?|[^@/:]+@)([^/:]+)/i.exec(url)
 	return match ? match[1].toLowerCase() : null
 }
 
@@ -29,9 +32,13 @@ export async function withGit<T>(work: () => Promise<T>, retried = false): Promi
 			return done && !retried ? withGit(work, true) : undefined
 		}
 		if (code === 'git-auth' && !retried) {
-			const saved = await dialogs.open(GitAccessDialog, { host: remoteHost() })
+			const saved = await dialogs.open(GitAccessDialog, {
+				host: remoteHost(),
+				reason: errorText(error),
+			})
 			return saved ? withGit(work, true) : undefined
 		}
+		tasks.report(error)
 		toasts.error(error, [{ label: 'Show', run: () => panels.open('output') }])
 		return undefined
 	}
@@ -42,11 +49,21 @@ export async function initRepo(): Promise<void> {
 }
 
 export async function commit(message: string, files: string[], amend: boolean): Promise<boolean> {
+	const dir = ws.dir
+	const upstream = git.status?.upstream
+	if (dir && upstream) {
+		const behind = await api.incoming(dir).catch(() => 0)
+		if (behind > 0) {
+			const choice = await dialogs.open(PullFirstDialog, { upstream, behind })
+			if (choice === 'pull') await pull()
+			if (choice !== 'commit') return false
+		}
+	}
 	const done = await withGit(async () => {
 		await git.commit(message, files, amend)
 		return true
 	})
-	if (done) toasts.show(`Committed "${message.split('\n')[0]}"`)
+	if (done) toasts.show(`Committed “${message.split('\n')[0]}”`)
 	return done === true
 }
 
@@ -66,14 +83,18 @@ export async function push(): Promise<void> {
 }
 
 export async function pull(): Promise<void> {
-	const done = await withGit(async () => {
-		await git.pull()
-		return true
-	})
-	if (done) {
-		await ws.reload()
-		toasts.show(`Pulled from ${git.remoteName ?? 'origin'}`)
+	const upstream = git.status?.upstream ?? git.remoteName ?? 'origin'
+	const conflicted = await withGit(() => git.pull())
+	if (conflicted === undefined) return
+	await ws.reload()
+	if (conflicted) {
+		tabs.open('conflicts')
+		toasts.info(
+			`Merging ${upstream} stopped on ${plural(git.conflicts.length, 'conflict', 'conflicts')}`,
+		)
+		return
 	}
+	toasts.show(`Pulled from ${git.remoteName ?? 'origin'}`)
 }
 
 export async function fetch(): Promise<void> {
@@ -150,6 +171,46 @@ export async function addRemote(): Promise<void> {
 	await withGit(async () => {
 		await api.addRemote(dir, name, url.trim())
 		await git.refreshRefs()
+	})
+}
+
+export async function changeRemoteUrl(name: string): Promise<void> {
+	const current = git.remotes.find((r) => r.name === name)?.url ?? ''
+	const url = await dialogs.open(PromptDialog, {
+		title: `Change ${name}`,
+		label: 'Repository URL',
+		value: current,
+		confirm: 'Save',
+	})
+	if (!url || !ws.dir || url.trim() === current) return
+	const dir = ws.dir
+	await withGit(async () => {
+		await api.setRemoteUrl(dir, name, url.trim())
+		await git.refreshRefs()
+	})
+}
+
+export async function removeRemote(name: string): Promise<void> {
+	const ok = await dialogs.open(ConfirmDialog, {
+		title: `Remove ${name}?`,
+		message: "The repository itself isn't touched. Push and pull stop using it.",
+		confirm: 'Remove',
+		danger: true,
+	})
+	if (!ok || !ws.dir) return
+	const dir = ws.dir
+	await withGit(async () => {
+		await api.removeRemote(dir, name)
+		await git.refreshRefs()
+	})
+}
+
+export async function keepSide(path: string, side: 'ours' | 'theirs'): Promise<void> {
+	const dir = ws.dir
+	if (!dir) return
+	await withGit(async () => {
+		await api.resolveConflict(dir, path, side)
+		await Promise.all([git.refresh(), content.refreshChanges()])
 	})
 }
 

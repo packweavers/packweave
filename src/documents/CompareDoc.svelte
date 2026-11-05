@@ -2,8 +2,11 @@
 	import { contentChange } from '@/lib/content/changes'
 	import { deleteBranch, deleteRemoteBranch, mergeBranch } from '@/lib/flows/branches'
 	import { openInFiles } from '@/lib/flows/files'
-	import { changeMark, displayPath, isContentPath, statusWord } from '@/lib/git/changes'
+	import { changeMark, displayPath, plainFiles, statusWord } from '@/lib/git/changes'
+	import { commitMenu, contentMenu } from '@/lib/menus'
+	import { content } from '@/lib/state/content.svelte'
 	import { git } from '@/lib/state/git.svelte'
+	import { menus } from '@/lib/state/menus.svelte'
 	import { tabs, type Doc } from '@/lib/state/tabs.svelte'
 	import { ws } from '@/lib/state/workspace.svelte'
 	import { errorText } from '@/lib/tauri/call'
@@ -32,15 +35,22 @@
 		void git.head
 		void git.branches
 		if (!dir) return
+		let live = true
 		void compare(dir, base, other)
 			.then((c) => {
+				if (!live) return
 				result = c
 				failed = null
 			})
-			.catch((e) => (failed = errorText(e)))
+			.catch((e) => {
+				if (live) failed = errorText(e)
+			})
+		return () => {
+			live = false
+		}
 	})
 
-	const files = $derived((result?.files ?? []).filter((f) => !isContentPath(f.path)))
+	const files = $derived(plainFiles(result?.files ?? [], result?.pack?.items ?? []))
 </script>
 
 <div class="bar doc-toolbar">
@@ -76,7 +86,14 @@
 			<div class="band bar">Content <span class="count-text">{result.pack.items.length}</span></div>
 			{#each result.pack.items as item (item.path)}
 				{@const w = contentChange(item.kind)}
-				<div class="trow">
+				{@const held = content.find(item.path)}
+				<div
+					class="trow"
+					role="row"
+					tabindex="-1"
+					ondblclick={() => held && tabs.open('mod', held.key)}
+					oncontextmenu={(e) => held && menus.at(e, contentMenu([held.key]))}
+				>
 					<span class="mark {w}"></span>
 					<span class="mark-text {w}">{changeMark(w)}</span>
 					<span class="name">{item.name}</span>
@@ -110,7 +127,11 @@
 		{/if}
 		<div class="band bar">Commits <span class="count-text">{result.commits.length}</span></div>
 		{#each result.commits as commit (commit.hash)}
-			<button class="trow" onclick={() => tabs.open('history', commit.hash)}>
+			<button
+				class="trow"
+				onclick={() => tabs.open('history', commit.hash)}
+				oncontextmenu={(e) => menus.at(e, commitMenu(commit.hash, commit.subject))}
+			>
 				<span class="mono small">{commit.short}</span>
 				<span class="name">{commit.subject}</span>
 				<span class="spacer"></span>

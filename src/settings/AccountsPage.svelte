@@ -4,7 +4,7 @@
 	import { toasts } from '@/lib/state/toasts.svelte'
 	import { deleteSecret, secretStatus, setSecret } from '@/lib/tauri/app'
 	import { errorText } from '@/lib/tauri/call'
-	import { deleteToken, saveToken } from '@/lib/tauri/git'
+	import { deleteToken, saveToken, signedIn } from '@/lib/tauri/git'
 	import { openExternal } from '@/lib/tauri/windows'
 	import { pending } from '@/ui/pending'
 
@@ -48,6 +48,7 @@
 	]
 
 	let connected = $state<Record<string, boolean>>({})
+	let viaGit = $state<Record<string, boolean>>({})
 	let editing = $state<string | null>(null)
 	let token = $state('')
 	let error = $state<string | null>(null)
@@ -69,6 +70,16 @@
 			at += account.keys.length
 		}
 		connected = status
+		const hosted = ACCOUNTS.flatMap((a) => (a.host ? [{ id: a.id, host: a.host }] : []))
+		const git = await Promise.all(
+			hosted.map((a) =>
+				signedIn(a.host).catch((error) => {
+					toasts.error(error)
+					return false
+				}),
+			),
+		)
+		viaGit = Object.fromEntries(hosted.map((a, i) => [a.id, git[i]]))
 	}
 
 	async function save(account: Account): Promise<void> {
@@ -124,6 +135,10 @@
 			<span class="spacer"></span>
 			<button class="btn" onclick={() => (editing = account.id)}>Replace…</button>
 			<button class="btn danger" onclick={pending(() => remove(account))}>Remove</button>
+		{:else if viaGit[account.id]}
+			<span class="tag added">✓ signed in with Git</span>
+			<span class="spacer"></span>
+			<button class="btn" onclick={() => (editing = account.id)}>Add token…</button>
 		{:else}
 			<span class="spacer"></span>
 			<button class="btn quiet" onclick={() => void openExternal(account.create)}>Create one</button

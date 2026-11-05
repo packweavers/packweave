@@ -21,6 +21,11 @@ export function isContentPath(path: string): boolean {
 	return path.startsWith('content/')
 }
 
+export function plainFiles<T extends { path: string }>(files: T[], items: { path: string }[]): T[] {
+	const shown = new Set(items.map((i) => i.path))
+	return files.filter((f) => !isContentPath(f.path) || !shown.has(f.path))
+}
+
 export function displayPath(path: string): string {
 	return path.startsWith('overrides/') ? path.slice('overrides/'.length) : path
 }

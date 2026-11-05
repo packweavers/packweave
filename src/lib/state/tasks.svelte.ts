@@ -58,6 +58,13 @@ class Tasks {
 		this.failures++
 	}
 
+	report(error: unknown): void {
+		const text = errorText(error)
+		if (this.log.slice(-10).some((e) => e.tone === 'error' && e.text.endsWith(text))) return
+		this.note(text, 'error')
+		this.failures++
+	}
+
 	or<T>(label: string, fallback: T): (error: unknown) => T {
 		return (error) => {
 			this.fail(label, error)

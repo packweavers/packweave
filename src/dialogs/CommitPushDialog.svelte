@@ -2,7 +2,7 @@
 	import { untrack } from 'svelte'
 
 	import { contentChange } from '@/lib/content/changes'
-	import { changeMark, changeWord, displayPath, isContentPath } from '@/lib/git/changes'
+	import { changeMark, changeWord, displayPath, plainFiles } from '@/lib/git/changes'
 	import { content } from '@/lib/state/content.svelte'
 	import { git } from '@/lib/state/git.svelte'
 	import { plural } from '@/lib/util/format'
@@ -24,7 +24,7 @@
 	)
 
 	const items = $derived(content.changes?.items ?? [])
-	const files = $derived(git.changes.filter((c) => !isContentPath(c.path) && !c.conflicted))
+	const files = $derived(plainFiles(git.changes, items).filter((c) => !c.conflicted))
 	const paths = $derived([...items.map((i) => i.path), ...files.map((f) => f.path)])
 	const chosen = $derived(paths.filter((path) => picked[path]))
 	const all = $derived(paths.length > 0 && chosen.length === paths.length)

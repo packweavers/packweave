@@ -3,7 +3,7 @@
 	import { newBranch } from '@/lib/flows/branches'
 	import { openInFiles } from '@/lib/flows/files'
 	import { cherryPick, createTag, resetTo, revertCommit } from '@/lib/flows/git'
-	import { changeMark, changeWord, displayPath, isContentPath } from '@/lib/git/changes'
+	import { changeMark, changeWord, displayPath, plainFiles } from '@/lib/git/changes'
 	import { git } from '@/lib/state/git.svelte'
 	import { selection } from '@/lib/state/selection.svelte'
 	import { tabs, type Doc } from '@/lib/state/tabs.svelte'
@@ -24,14 +24,15 @@
 	const hash = $derived(selection.of(doc.id)[0] ?? null)
 
 	let commit = $state<GitCommit | null>(null)
-	let files = $state<GitChange[]>([])
+	let listed = $state<GitChange[]>([])
 	let pack = $state<PackDiff | null>(null)
+	const files = $derived(plainFiles(listed, pack?.items ?? []))
 
 	$effect(() => {
 		const dir = ws.dir
 		const current = hash
 		commit = null
-		files = []
+		listed = []
 		pack = null
 		if (!dir || !current) return
 		void commitInfo(dir, current)
@@ -41,7 +42,7 @@
 			.catch(tasks.or('Reading the commit', undefined))
 		void commitChanges(dir, current)
 			.then((list) => {
-				if (hash === current) files = list.filter((c) => !isContentPath(c.path))
+				if (hash === current) listed = list
 			})
 			.catch(tasks.or("Listing the commit's files", undefined))
 		void packDiff(dir, `${current}^`, current)
