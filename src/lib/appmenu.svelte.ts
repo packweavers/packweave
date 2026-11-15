@@ -298,6 +298,8 @@ async function packMenu(): Promise<Entry[]> {
 		{
 			label: 'Instance',
 			items: [
+				{ label: 'Play in Prism', command: 'instance.play' },
+				'separator',
 				{ label: 'Push to Instance', command: 'instance.push' },
 				{ label: 'Pull from Instance', command: 'instance.pull' },
 				{ label: 'Review Changes', command: 'instance.review' },

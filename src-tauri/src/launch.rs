@@ -209,3 +209,179 @@ pub fn create_prism_instance(
     std::fs::write(root.join("mmc-pack.json"), crate::dist::mmc_pack(manifest)?)?;
     Ok(launchers::resolve_folder(&root))
 }
+
+const PRISM_NOT_FOUND: &str = "Prism Launcher isn't installed or couldn't be found.";
+
+fn on_path(exe: &str) -> bool {
+    std::env::var_os("PATH")
+        .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(exe).is_file()))
+}
+
+fn find_prism(data_dir: &Path) -> Option<std::process::Command> {
+    use std::process::Command;
+    let exe = if cfg!(windows) {
+        "prismlauncher.exe"
+    } else {
+        "prismlauncher"
+    };
+    // Portable installs keep the executable next to the instances folder.
+    let portable = data_dir.join(exe);
+    if portable.is_file() {
+        return Some(Command::new(portable));
+    }
+    if data_dir
+        .to_string_lossy()
+        .contains("org.prismlauncher.PrismLauncher")
+    {
+        let flatpak = on_path("flatpak").then(|| {
+            let mut cmd = Command::new("flatpak");
+            cmd.args(["run", "org.prismlauncher.PrismLauncher"]);
+            cmd
+        });
+        return flatpak;
+    }
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    if cfg!(windows) {
+        if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+            candidates.push(Path::new(&local).join("Programs/PrismLauncher").join(exe));
+        }
+        if let Some(home) = std::env::var_os("USERPROFILE") {
+            candidates.push(
+                Path::new(&home)
+                    .join("scoop/apps/prismlauncher/current")
+                    .join(exe),
+            );
+        }
+        if let Some(pf) = std::env::var_os("ProgramFiles") {
+            candidates.push(Path::new(&pf).join("PrismLauncher").join(exe));
+        }
+    } else if cfg!(target_os = "macos") {
+        candidates.push("/Applications/Prism Launcher.app/Contents/MacOS/prismlauncher".into());
+        if let Some(home) = std::env::var_os("HOME") {
+            candidates.push(
+                Path::new(&home)
+                    .join("Applications/Prism Launcher.app/Contents/MacOS/prismlauncher"),
+            );
+        }
+    }
+    if let Some(found) = candidates.into_iter().find(|p| p.is_file()) {
+        return Some(Command::new(found));
+    }
+    // Linux packages, snap and AppImage symlinks.
+    on_path(exe).then(|| Command::new(exe))
+}
+
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "types.ts")]
+pub struct LaunchCheck {
+    /// The linked folder belongs to a Prism/MultiMC-style instance.
+    pub available: bool,
+    /// Why it can't be launched right now, if anything.
+    pub problem: Option<String>,
+}
+
+#[derive(Debug)]
+struct Launchable {
+    id: std::ffi::OsString,
+    data_dir: std::path::PathBuf,
+}
+
+fn check_instance(root: &Path) -> Result<Launchable, String> {
+    if !root.join("instance.cfg").is_file() {
+        return Err("The instance has no instance.cfg.".into());
+    }
+    let pack: serde_json::Value = std::fs::read_to_string(root.join("mmc-pack.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .ok_or("The instance has no readable mmc-pack.json.")?;
+    let has_minecraft = pack["components"]
+        .as_array()
+        .is_some_and(|c| c.iter().any(|c| c["uid"] == "net.minecraft"));
+    if !has_minecraft {
+        return Err("The instance has no Minecraft version set.".into());
+    }
+    let id = root
+        .file_name()
+        .ok_or("Couldn't read the instance folder name.")?;
+    let data_dir = root
+        .parent()
+        .and_then(Path::parent)
+        .ok_or("Couldn't find the Prism Launcher folder.")?;
+    if !data_dir.join("prismlauncher.cfg").is_file() {
+        return Err("The instance isn't in a Prism Launcher instances folder.".into());
+    }
+    Ok(Launchable {
+        id: id.to_os_string(),
+        data_dir: data_dir.to_path_buf(),
+    })
+}
+
+pub fn launch_check(game_dir: &Path) -> LaunchCheck {
+    let Some(root) = launchers::mmc_root(game_dir) else {
+        return LaunchCheck {
+            available: false,
+            problem: None,
+        };
+    };
+    let problem = match check_instance(&root) {
+        Err(problem) => Some(problem),
+        Ok(found) if find_prism(&found.data_dir).is_none() => Some(PRISM_NOT_FOUND.into()),
+        Ok(_) => None,
+    };
+    LaunchCheck {
+        available: true,
+        problem,
+    }
+}
+
+pub fn launch_in_prism(game_dir: &Path) -> Result<()> {
+    let root = launchers::mmc_root(game_dir)
+        .ok_or_else(|| anyhow!("Only Prism Launcher instances can be launched from here."))?;
+    if running(game_dir).is_some() {
+        bail!("Minecraft is already running in this instance.");
+    }
+    let found = check_instance(&root).map_err(|e| anyhow!(e))?;
+    let mut child = find_prism(&found.data_dir)
+        .ok_or_else(|| anyhow!(PRISM_NOT_FOUND))?
+        .arg("--launch")
+        .arg(&found.id)
+        .spawn()
+        .map_err(|e| anyhow!("Couldn't start Prism Launcher: {e}"))?;
+    // Reap the launcher when it exits so it doesn't linger as a zombie.
+    std::thread::spawn(move || child.wait());
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn check_instance_requires_config_minecraft_and_prism_data_dir() {
+        let data = std::env::temp_dir().join(format!("pw-launch-{}", std::process::id()));
+        let root = data.join("instances").join("My Pack");
+        std::fs::create_dir_all(&root).unwrap();
+
+        assert!(check_instance(&root).unwrap_err().contains("instance.cfg"));
+        std::fs::write(root.join("instance.cfg"), "name=My Pack\n").unwrap();
+        assert!(check_instance(&root).unwrap_err().contains("mmc-pack.json"));
+        std::fs::write(root.join("mmc-pack.json"), r#"{"components":[]}"#).unwrap();
+        assert!(check_instance(&root)
+            .unwrap_err()
+            .contains("Minecraft version"));
+        std::fs::write(
+            root.join("mmc-pack.json"),
+            r#"{"components":[{"uid":"net.minecraft","version":"1.21.1"}]}"#,
+        )
+        .unwrap();
+        assert!(check_instance(&root)
+            .unwrap_err()
+            .contains("Prism Launcher instances"));
+        std::fs::write(data.join("prismlauncher.cfg"), "").unwrap();
+        let ok = check_instance(&root).unwrap();
+        assert_eq!(ok.id, "My Pack");
+
+        let _ = std::fs::remove_dir_all(&data);
+    }
+}

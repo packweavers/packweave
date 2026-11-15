@@ -102,6 +102,16 @@ export type InstanceJar = { file: string, enabled: boolean, };
 
 export type ItemChange = { kind: string, name: string, projectId: string, projectType: ProjectType, slug: string, path: string, dependency: boolean, parents: Array<string>, fromVersion: string | null, toVersion: string | null, fromSide: string | null, toSide: string | null, fromProvider: ProviderId | null, toProvider: ProviderId | null, disabled: boolean, };
 
+export type LaunchCheck = { 
+/**
+ * The linked folder belongs to a Prism/MultiMC-style instance.
+ */
+available: boolean, 
+/**
+ * Why it can't be launched right now, if anything.
+ */
+problem: string | null, };
+
 export type LoaderVersions = { versions: Array<string>, };
 
 export type LocalContent = { relPath: string, filename: string, projectType: ProjectType, size: number, meta?: ArchiveMeta, };

@@ -1,9 +1,10 @@
 <script lang="ts">
-	import { Blocks, Bug, Files, GitBranch, Search, Settings } from '@lucide/svelte'
+	import { Blocks, Bug, Files, GitBranch, Play, Search, Settings } from '@lucide/svelte'
 
 	import { bisect } from '@/lib/state/bisect.svelte'
 	import { content } from '@/lib/state/content.svelte'
 	import { git } from '@/lib/state/git.svelte'
+	import { instance } from '@/lib/state/instance.svelte'
 	import { layout, type ViewId } from '@/lib/state/layout.svelte'
 	import { openSettingsWindow } from '@/lib/tauri/windows'
 	import IconButton from '@/ui/IconButton.svelte'
@@ -67,6 +68,16 @@
 		/>
 	{/each}
 	<span class="spacer"></span>
+	{#if instance.launchable && !instance.running && !instance.missing}
+		<IconButton
+			icon={Play}
+			label={instance.launchProblem ?? 'Play in Prism Launcher'}
+			disabled={instance.launchProblem !== null}
+			command="instance.play"
+			size={20}
+			onclick={() => void instance.play()}
+		/>
+	{/if}
 	<IconButton
 		icon={Settings}
 		label="Settings"
