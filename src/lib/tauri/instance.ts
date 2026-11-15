@@ -3,6 +3,7 @@ import type {
 	DetectedInstance,
 	IgnoreKind,
 	InstanceJar,
+	LaunchCheck,
 	LogChunk,
 	PackResolved,
 	Running,
@@ -93,6 +94,14 @@ export function readGameLog(dir: string, offset: number): Promise<LogChunk> {
 
 export function createPrismInstance(dir: string): Promise<DetectedInstance> {
 	return call('create_prism_instance', { path: dir })
+}
+
+export function launchCheck(dir: string): Promise<LaunchCheck> {
+	return call('launch_check', { path: dir })
+}
+
+export function launchInstance(dir: string): Promise<void> {
+	return call('launch_instance', { path: dir })
 }
 
 export function canCopyInstance(gameDir: string): Promise<boolean> {

@@ -420,6 +420,15 @@
 		<span class="doc-title">{instance.name}</span>
 		<span class="small">{instance.binding?.launcher}</span>
 		<span class="spacer"></span>
+		{#if instance.launchable}
+			<button
+				class="btn"
+				disabled={running || instance.launchProblem !== null}
+				title={instance.launchProblem ?? 'Play in Prism Launcher'}
+				onclick={() => void instance.play()}
+				>{running ? 'Running' : 'Play'}</button
+			>
+		{/if}
 		<button class="btn" onclick={() => void openIgnoreFile('git')}>Edit .gitignore</button>
 		<button
 			class="btn"

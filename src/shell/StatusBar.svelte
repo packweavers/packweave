@@ -87,6 +87,14 @@
 		{:else}
 			<InstanceDot status={instance.status} />
 			<button class="name link" onclick={review}>{instance.name}</button>
+			{#if instance.launchable && !instance.running && !instance.missing}
+				<button
+					class="btn"
+					disabled={instance.launchProblem !== null}
+					title={instance.launchProblem ?? 'Play in Prism Launcher'}
+					onclick={() => void instance.play()}>Play</button
+				>
+			{/if}
 			{#if instance.status === 'running'}
 				<span>running {runtime}</span>
 				{#if instance.toPull.length > 0 && !bisect.active}

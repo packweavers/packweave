@@ -205,6 +205,8 @@ fn main() {
             commands::instance_running,
             commands::read_game_log,
             commands::create_prism_instance,
+            commands::launch_instance,
+            commands::launch_check,
             commands::can_copy_instance,
             commands::copy_instance,
             commands::delete_instance,

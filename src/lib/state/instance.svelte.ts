@@ -33,6 +33,10 @@ class InstanceState {
 	missing = $state(false)
 	scanError = $state<string | null>(null)
 	running = $state.raw<Running | null>(null)
+	// Prism instance root found next to the linked folder (works when .minecraft was linked).
+	launchable = $state(false)
+	// Why Play can't run (Prism missing, instance not set up); null when it can.
+	launchProblem = $state<string | null>(null)
 	applying = $state(false)
 	log = $state('')
 	logError = $state<string | null>(null)
@@ -137,6 +141,8 @@ class InstanceState {
 
 	reset(): void {
 		this.binding = null
+		this.launchable = false
+		this.launchProblem = null
 		this.report = null
 		this.missing = false
 		this.scanError = null
@@ -151,7 +157,10 @@ class InstanceState {
 		if (!dir) return
 		this.binding = await api.binding(dir).catch(tasks.or('Reading the linked instance', null))
 		bisect.restore()
+		this.launchable = false
+		this.launchProblem = null
 		if (!this.binding) return
+		await this.checkLaunch()
 		this.#startRunningPoll()
 		await this.scan()
 	}
@@ -275,6 +284,30 @@ class InstanceState {
 		)
 	}
 
+	async checkLaunch(): Promise<void> {
+		const dir = ws.dir
+		const check = dir ? await api.launchCheck(dir).catch(() => null) : null
+		this.launchable = check?.available ?? false
+		this.launchProblem = check?.problem ?? null
+	}
+
+	async play(): Promise<void> {
+		const dir = ws.dir
+		if (!dir || !this.launchable || this.running) return
+		await this.checkLaunch()
+		if (this.launchProblem) {
+			toasts.error(this.launchProblem)
+			return
+		}
+		try {
+			await tasks.run('Starting Prism Launcher', () => api.launchInstance(dir))
+		} catch (error) {
+			toasts.error(error)
+			return
+		}
+		void this.pollRunning()
+	}
+
 	async pollRunning(): Promise<void> {
 		const dir = ws.dir
 		if (!dir || !this.binding) return
@@ -282,6 +315,8 @@ class InstanceState {
 		this.running = await api
 			.running(dir)
 			.catch(tasks.or('Checking whether the game is running', null))
+		// Picks up Prism being installed or the instance being fixed while the app is open.
+		if (!this.running) void this.checkLaunch()
 		if (was && !this.running) this.scheduleScan()
 		if (!was && this.running && app.prefs.gameLogOnLaunch) panels.open('gamelog')
 	}

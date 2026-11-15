@@ -276,6 +276,23 @@ pub async fn create_prism_instance(path: String) -> Result<DetectedInstance, Str
 }
 
 #[tauri::command]
+pub async fn launch_instance(path: String) -> Result<(), String> {
+    let instance = bound_instance(Path::new(&path))?;
+    blocking(move || launch::launch_in_prism(&instance)).await
+}
+
+#[tauri::command]
+pub async fn launch_check(path: String) -> Result<launch::LaunchCheck, String> {
+    let Ok(instance) = bound_instance(Path::new(&path)) else {
+        return Ok(launch::LaunchCheck {
+            available: false,
+            problem: None,
+        });
+    };
+    blocking(move || Ok(launch::launch_check(&instance))).await
+}
+
+#[tauri::command]
 pub async fn delete_instance(game_dir: String) -> Result<(), String> {
     blocking(move || launch::delete_instance(Path::new(&game_dir))).await
 }

@@ -465,6 +465,13 @@ const instanceCommands: Command[] = [
 		run: () => instance.pull(),
 	},
 	{
+		id: 'instance.play',
+		title: 'Play in Prism Launcher',
+		group: 'Instance',
+		when: () => instance.launchable && !instance.launchProblem && !instance.running,
+		run: () => instance.play(),
+	},
+	{
 		id: 'instance.review',
 		title: 'Review instance changes',
 		group: 'Instance',
